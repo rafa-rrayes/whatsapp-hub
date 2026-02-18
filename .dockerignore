@@ -1,0 +1,16 @@
+node_modules
+frontend/node_modules
+dist
+public
+data
+.env
+.env.local
+*.log
+.git
+.gitignore
+.claude
+.idea
+.vscode
+.DS_Store
+LICENSE
+README.md

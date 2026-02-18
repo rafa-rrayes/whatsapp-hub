@@ -1,0 +1,62 @@
+{
+  "name": "whatsapp-hub",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Self-hosted WhatsApp API hub — one persistent connection powering all your projects via REST, WebSocket, and webhooks",
+  "main": "dist/index.js",
+  "license": "MIT",
+  "author": "Rafa Rrayes",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rafa-rrayes/whatsapp-hub.git"
+  },
+  "homepage": "https://github.com/rafa-rrayes/whatsapp-hub",
+  "bugs": {
+    "url": "https://github.com/rafa-rrayes/whatsapp-hub/issues"
+  },
+  "keywords": [
+    "whatsapp",
+    "whatsapp-api",
+    "baileys",
+    "self-hosted",
+    "rest-api",
+    "websocket",
+    "webhook",
+    "whatsapp-bot"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx watch src/index.ts",
+    "db:reset": "rm -f data/whatsapp-hub.db && npm start"
+  },
+  "dependencies": {
+    "@hapi/boom": "^10.0.1",
+    "@whiskeysockets/baileys": "^7.0.0-rc.9",
+    "better-sqlite3": "^11.7.0",
+    "content-disposition": "^1.0.1",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.1",
+    "express-rate-limit": "^8.2.1",
+    "express-ws": "^5.0.2",
+    "helmet": "^8.1.0",
+    "mime-types": "^2.1.35",
+    "node-cache": "^5.1.2",
+    "pino": "^9.5.0",
+    "qrcode": "^1.5.4",
+    "qrcode-terminal": "^0.12.0",
+    "uuid": "^10.0.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/content-disposition": "^0.5.9",
+    "@types/express": "^5.0.0",
+    "@types/express-ws": "^3.0.5",
+    "@types/mime-types": "^2.1.4",
+    "@types/node": "^22.9.0",
+    "@types/qrcode": "^1.5.5",
+    "@types/uuid": "^10.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

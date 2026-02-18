@@ -1,0 +1,25 @@
+services:
+  whatsapp-hub:
+    build: .
+    container_name: whatsapp-hub
+    restart: unless-stopped
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - PORT=3100
+      - API_KEY=${API_KEY:?Set API_KEY in .env}
+      - DATA_DIR=/app/data
+      - MEDIA_DIR=/app/data/media
+      - AUTO_DOWNLOAD_MEDIA=true
+      - MAX_MEDIA_SIZE_MB=100
+      - LOG_LEVEL=info
+      - SESSION_NAME=default
+      - WEBHOOK_URLS=${WEBHOOK_URLS:-}
+      - WEBHOOK_SECRET=${WEBHOOK_SECRET:-}
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3100/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
