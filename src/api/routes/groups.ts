@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { groupsRepo } from '../../database/repositories/groups.js';
 import { chatsRepo } from '../../database/repositories/chats.js';
 import { connectionManager } from '../../connection/manager.js';
+import { isValidJid } from '../../utils/security.js';
 
 const router = Router();
 
@@ -18,6 +19,10 @@ router.get('/', (req: Request, res: Response) => {
 // GET /api/groups/:jid — single group with participants
 router.get('/:jid', (req: Request, res: Response) => {
   try {
+    if (!isValidJid(req.params.jid)) {
+      res.status(400).json({ error: 'Invalid JID format' });
+      return;
+    }
     const group = groupsRepo.getByJid(req.params.jid as string);
     if (!group) {
       res.status(404).json({ error: 'Group not found' });
@@ -33,6 +38,10 @@ router.get('/:jid', (req: Request, res: Response) => {
 // GET /api/groups/:jid/metadata — fetch fresh metadata from WhatsApp
 router.get('/:jid/metadata', async (req: Request, res: Response) => {
   try {
+    if (!isValidJid(req.params.jid)) {
+      res.status(400).json({ error: 'Invalid JID format' });
+      return;
+    }
     const metadata = await connectionManager.getGroupMetadata(req.params.jid as string);
     res.json(metadata);
   } catch (err) {
@@ -43,6 +52,10 @@ router.get('/:jid/metadata', async (req: Request, res: Response) => {
 // GET /api/groups/:jid/invite-code
 router.get('/:jid/invite-code', async (req: Request, res: Response) => {
   try {
+    if (!isValidJid(req.params.jid)) {
+      res.status(400).json({ error: 'Invalid JID format' });
+      return;
+    }
     const code = await connectionManager.getGroupInviteCode(req.params.jid as string);
     res.json({ code });
   } catch (err) {
@@ -53,6 +66,10 @@ router.get('/:jid/invite-code', async (req: Request, res: Response) => {
 // PUT /api/groups/:jid/subject
 router.put('/:jid/subject', async (req: Request, res: Response) => {
   try {
+    if (!isValidJid(req.params.jid)) {
+      res.status(400).json({ error: 'Invalid JID format' });
+      return;
+    }
     await connectionManager.groupUpdateSubject(req.params.jid as string, req.body.subject);
     res.json({ success: true });
   } catch (err) {
@@ -63,6 +80,10 @@ router.put('/:jid/subject', async (req: Request, res: Response) => {
 // PUT /api/groups/:jid/description
 router.put('/:jid/description', async (req: Request, res: Response) => {
   try {
+    if (!isValidJid(req.params.jid)) {
+      res.status(400).json({ error: 'Invalid JID format' });
+      return;
+    }
     await connectionManager.groupUpdateDescription(req.params.jid as string, req.body.description);
     res.json({ success: true });
   } catch (err) {
@@ -118,6 +139,10 @@ router.post('/sync', async (_req: Request, res: Response) => {
 // POST /api/groups/:jid/participants — add/remove/promote/demote
 router.post('/:jid/participants', async (req: Request, res: Response) => {
   try {
+    if (!isValidJid(req.params.jid)) {
+      res.status(400).json({ error: 'Invalid JID format' });
+      return;
+    }
     const { participants, action } = req.body;
     if (!participants || !action) {
       res.status(400).json({ error: 'Missing participants or action' });

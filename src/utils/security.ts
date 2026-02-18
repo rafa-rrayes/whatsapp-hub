@@ -140,8 +140,9 @@ export function clampPagination(value: unknown, defaultVal: number, max: number)
  */
 const JID_REGEX = /^(\d+@(s\.whatsapp\.net|lid|broadcast)|\d+-\d+@g\.us|status@broadcast)$/;
 
-export function isValidJid(jid: string): boolean {
-  if (typeof jid !== 'string' || jid.length === 0 || jid.length > 128) return false;
+export function isValidJid(jid: unknown): boolean {
+  if (typeof jid !== 'string') return false;
+  if (jid.length === 0 || jid.length > 128) return false;
   return JID_REGEX.test(jid);
 }
 

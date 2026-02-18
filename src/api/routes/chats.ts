@@ -22,6 +22,10 @@ router.get('/', (req: Request, res: Response) => {
 // GET /api/chats/:jid — single chat with recent messages
 router.get('/:jid', (req: Request, res: Response) => {
   try {
+    if (!isValidJid(req.params.jid)) {
+      res.status(400).json({ error: 'Invalid JID format' });
+      return;
+    }
     const chat = chatsRepo.getByJid(req.params.jid as string);
     if (!chat) {
       res.status(404).json({ error: 'Chat not found' });
