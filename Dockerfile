@@ -26,7 +26,7 @@ RUN npx vite build --outDir /output
 # --- Production stage ---
 FROM node:20-alpine
 
-RUN apk add --no-cache git
+RUN apk add --no-cache git su-exec
 
 WORKDIR /app
 
@@ -35,14 +35,14 @@ COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/package.json ./
 COPY --from=frontend /output ./public
 
-# Create data directories
-RUN mkdir -p /app/data/media /app/data/auth
-
-# Run as non-root user
+# Create non-root user and own the app directory
 RUN addgroup -g 1001 appgroup && adduser -u 1001 -G appgroup -s /bin/sh -D appuser
 RUN chown -R appuser:appgroup /app
-USER appuser
+
+# Entrypoint fixes data dir ownership at startup (needed for bind mounts), then drops to appuser
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
 
 EXPOSE 3100
 
-CMD ["node", "dist/index.js"]
+ENTRYPOINT ["/app/entrypoint.sh"]
