@@ -11,6 +11,7 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
   const apiKey =
     (req.headers['x-api-key'] as string) ||
     (req.headers['authorization']?.replace('Bearer ', '') as string) ||
+    (req.query['api_key'] as string) ||
     '';
 
   if (!apiKey || !timingSafeEqual(apiKey, config.apiKey)) {

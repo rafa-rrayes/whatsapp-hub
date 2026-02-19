@@ -28,7 +28,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsx watch src/index.ts",
-    "db:reset": "rm -f data/whatsapp-hub.db && npm start"
+    "db:reset": "echo 'This will delete the database. Press Ctrl+C to cancel.' && read -r && rm -f data/whatsapp-hub.db && npm start"
   },
   "dependencies": {
     "@hapi/boom": "^10.0.1",

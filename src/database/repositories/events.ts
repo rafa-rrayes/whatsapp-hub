@@ -1,16 +1,28 @@
 import { getDb } from '../index.js';
 
+export interface EventRow {
+  id: number;
+  event_type: string;
+  payload: string;
+  logged_at: string;
+}
+
+export interface EventTypeCount {
+  event_type: string;
+  count: number;
+}
+
 export const eventsRepo = {
-  log(eventType: string, payload: any): void {
+  log(eventType: string, payload: unknown): void {
     getDb()
       .prepare('INSERT INTO event_log (event_type, payload) VALUES (?, ?)')
       .run(eventType, JSON.stringify(payload));
   },
 
-  query(opts: { type?: string; limit?: number; offset?: number; after?: string }): any[] {
+  query(opts: { type?: string; limit?: number; offset?: number; after?: string }): EventRow[] {
     const db = getDb();
     const conditions: string[] = [];
-    const params: any = {};
+    const params: Record<string, string | number> = {};
 
     if (opts.type) {
       conditions.push('event_type = @type');
@@ -27,13 +39,13 @@ export const eventsRepo = {
 
     return db
       .prepare(`SELECT * FROM event_log ${where} ORDER BY id DESC LIMIT @limit OFFSET @offset`)
-      .all({ ...params, limit, offset });
+      .all({ ...params, limit, offset }) as EventRow[];
   },
 
-  getEventTypes(): any[] {
+  getEventTypes(): EventTypeCount[] {
     return getDb()
       .prepare('SELECT event_type, COUNT(*) as count FROM event_log GROUP BY event_type ORDER BY count DESC')
-      .all();
+      .all() as EventTypeCount[];
   },
 
   prune(olderThanDays: number): number {
