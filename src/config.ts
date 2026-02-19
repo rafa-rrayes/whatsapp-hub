@@ -4,26 +4,32 @@ import { isInsecureDefaultKey, generateSecureKey } from './utils/security.js';
 
 dotenv.config();
 
+export const configErrors: string[] = [];
+
 // Validate API key at import time
-const rawApiKey = process.env.API_KEY || '';
+let rawApiKey = process.env.API_KEY || '';
 
 if (!rawApiKey || isInsecureDefaultKey(rawApiKey)) {
   const generated = generateSecureKey();
   const sep = '='.repeat(60);
-  process.stderr.write(
+  const msg =
     `${sep}\n` +
     '  SECURITY ERROR: API_KEY is not set or uses an insecure default.\n' +
     '  Set a strong, random API_KEY in your .env file or environment.\n\n' +
     '  Here is a generated key you can use:\n' +
     `  API_KEY=${generated}\n` +
-    `${sep}\n`
+    `${sep}\n`;
+  process.stderr.write(msg);
+  configErrors.push(
+    'API_KEY is not set or uses an insecure default. ' +
+    'Set a strong, random API_KEY in your .env file or environment. ' +
+    `Here is a generated key you can use: ${generated}`
   );
-  process.exit(1);
-}
-
-if (rawApiKey.length < 16) {
+  rawApiKey = 'invalid-placeholder';
+} else if (rawApiKey.length < 16) {
   process.stderr.write('SECURITY ERROR: API_KEY must be at least 16 characters long.\n');
-  process.exit(1);
+  configErrors.push('API_KEY must be at least 16 characters long.');
+  rawApiKey = 'invalid-placeholder';
 }
 
 export const config = {

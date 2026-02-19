@@ -1,4 +1,4 @@
-import { config } from './config.js';
+import { config, configErrors } from './config.js';
 import { initDb, closeDb } from './database/index.js';
 import { connectionManager } from './connection/manager.js';
 import { registerEventHandlers } from './events/handler.js';
@@ -8,6 +8,7 @@ import { closeWebSockets } from './websocket/server.js';
 import { loadJidAliases, migrateExistingJids } from './utils/jid.js';
 import { initSettings } from './settings.js';
 import { log } from './utils/logger.js';
+import { startErrorServer } from './error-server.js';
 
 async function main() {
   log.boot.info('WhatsApp Hub — Personal WhatsApp API');
@@ -85,7 +86,24 @@ async function main() {
   }, 'WhatsApp Hub is running! Scan the QR code with WhatsApp to connect.');
 }
 
-main().catch((err) => {
-  log.boot.fatal({ err }, 'Fatal error');
-  process.exit(1);
-});
+if (configErrors.length > 0) {
+  const server = startErrorServer(config.port, config.host, configErrors);
+  const shutdown = () => {
+    server.close();
+    process.exit(0);
+  };
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
+} else {
+  main().catch((err) => {
+    log.boot.fatal({ err }, 'Fatal error');
+    const message = err instanceof Error ? err.message : String(err);
+    const server = startErrorServer(config.port, config.host, [message]);
+    const shutdown = () => {
+      server.close();
+      process.exit(1);
+    };
+    process.on('SIGINT', shutdown);
+    process.on('SIGTERM', shutdown);
+  });
+}

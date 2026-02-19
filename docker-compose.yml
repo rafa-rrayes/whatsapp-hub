@@ -9,7 +9,7 @@ services:
       - ./data:/app/data
     environment:
       - PORT=3100
-      - API_KEY=${API_KEY:?Set API_KEY in .env}
+      - API_KEY=${API_KEY:-}
       - DATA_DIR=/app/data
       - MEDIA_DIR=/app/data/media
       - AUTO_DOWNLOAD_MEDIA=true
