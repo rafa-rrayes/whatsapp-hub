@@ -4,23 +4,11 @@ import { mediaRepo } from '../database/repositories/media.js';
 import { config } from '../config.js';
 import { getSettings } from '../settings.js';
 import { log } from '../utils/logger.js';
+import type { MediaMessageFields } from '../events/types.js';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import mime from 'mime-types';
-
-interface MediaMessageFields {
-  mimetype?: string | null;
-  fileLength?: number | Long | null;
-  fileName?: string | null;
-  seconds?: number | null;
-  width?: number | null;
-  height?: number | null;
-}
-
-interface Long {
-  toNumber(): number;
-}
 
 class MediaManager {
   private readonly MAX_QUEUE_SIZE = 5000;

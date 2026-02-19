@@ -12,6 +12,7 @@ import makeWASocket, {
   downloadMediaMessage,
 } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
+import { NotConnectedError } from '../api/errors.js';
 import fs from 'fs';
 import { config } from '../config.js';
 import { eventBus } from '../events/bus.js';
@@ -208,7 +209,7 @@ class ConnectionManager {
   // All send methods return WAMessage (Baileys v7 type) or undefined
 
   async sendTextMessage(jid: string, text: string, quotedId?: string): Promise<WAMessage | undefined> {
-    if (!this.sock) throw new Error('Not connected');
+    if (!this.sock) throw new NotConnectedError();
     let quoted: WAMessage | undefined;
     if (quotedId) {
       try {
@@ -225,7 +226,7 @@ class ConnectionManager {
   }
 
   async sendImage(jid: string, buffer: Buffer, caption?: string, mimeType?: string): Promise<WAMessage | undefined> {
-    if (!this.sock) throw new Error('Not connected');
+    if (!this.sock) throw new NotConnectedError();
     return this.sock.sendMessage(jid, {
       image: buffer,
       caption,
@@ -234,7 +235,7 @@ class ConnectionManager {
   }
 
   async sendDocument(jid: string, buffer: Buffer, filename: string, mimeType: string, caption?: string): Promise<WAMessage | undefined> {
-    if (!this.sock) throw new Error('Not connected');
+    if (!this.sock) throw new NotConnectedError();
     return this.sock.sendMessage(jid, {
       document: buffer,
       fileName: filename,
@@ -244,7 +245,7 @@ class ConnectionManager {
   }
 
   async sendAudio(jid: string, buffer: Buffer, ptt = false): Promise<WAMessage | undefined> {
-    if (!this.sock) throw new Error('Not connected');
+    if (!this.sock) throw new NotConnectedError();
     return this.sock.sendMessage(jid, {
       audio: buffer,
       ptt,
@@ -253,7 +254,7 @@ class ConnectionManager {
   }
 
   async sendVideo(jid: string, buffer: Buffer, caption?: string): Promise<WAMessage | undefined> {
-    if (!this.sock) throw new Error('Not connected');
+    if (!this.sock) throw new NotConnectedError();
     return this.sock.sendMessage(jid, {
       video: buffer,
       caption,
@@ -261,12 +262,12 @@ class ConnectionManager {
   }
 
   async sendSticker(jid: string, buffer: Buffer): Promise<WAMessage | undefined> {
-    if (!this.sock) throw new Error('Not connected');
+    if (!this.sock) throw new NotConnectedError();
     return this.sock.sendMessage(jid, { sticker: buffer });
   }
 
   async sendLocation(jid: string, lat: number, lng: number, name?: string, address?: string): Promise<WAMessage | undefined> {
-    if (!this.sock) throw new Error('Not connected');
+    if (!this.sock) throw new NotConnectedError();
     return this.sock.sendMessage(jid, {
       location: {
         degreesLatitude: lat,
@@ -278,7 +279,7 @@ class ConnectionManager {
   }
 
   async sendContact(jid: string, contactJid: string, name: string): Promise<WAMessage | undefined> {
-    if (!this.sock) throw new Error('Not connected');
+    if (!this.sock) throw new NotConnectedError();
     const safeName = sanitizeVCardField(name);
     const vcard = `BEGIN:VCARD\nVERSION:3.0\nFN:${safeName}\nTEL;type=CELL;type=VOICE;waid=${contactJid.split('@')[0]}:+${contactJid.split('@')[0]}\nEND:VCARD`;
     return this.sock.sendMessage(jid, {
@@ -287,26 +288,26 @@ class ConnectionManager {
   }
 
   async sendReaction(jid: string, messageId: string, emoji: string): Promise<WAMessage | undefined> {
-    if (!this.sock) throw new Error('Not connected');
+    if (!this.sock) throw new NotConnectedError();
     return this.sock.sendMessage(jid, {
       react: { text: emoji, key: { remoteJid: jid, id: messageId } as WAMessageKey },
     });
   }
 
   async markRead(jid: string, messageIds: string[]): Promise<void> {
-    if (!this.sock) throw new Error('Not connected');
+    if (!this.sock) throw new NotConnectedError();
     await this.sock.readMessages(
       messageIds.map((id) => ({ remoteJid: jid, id }) as WAMessageKey)
     );
   }
 
   async sendPresenceUpdate(type: 'available' | 'unavailable' | 'composing' | 'recording' | 'paused', jid?: string): Promise<void> {
-    if (!this.sock) throw new Error('Not connected');
+    if (!this.sock) throw new NotConnectedError();
     await this.sock.sendPresenceUpdate(type, jid);
   }
 
   async getProfilePicUrl(jid: string): Promise<string | undefined> {
-    if (!this.sock) throw new Error('Not connected');
+    if (!this.sock) throw new NotConnectedError();
     try {
       return await this.sock.profilePictureUrl(jid, 'image');
     } catch {
@@ -315,37 +316,37 @@ class ConnectionManager {
   }
 
   async updateProfileStatus(status: string): Promise<void> {
-    if (!this.sock) throw new Error('Not connected');
+    if (!this.sock) throw new NotConnectedError();
     await this.sock.updateProfileStatus(status);
   }
 
   async getGroupMetadata(jid: string) {
-    if (!this.sock) throw new Error('Not connected');
+    if (!this.sock) throw new NotConnectedError();
     return this.sock.groupMetadata(jid);
   }
 
   async getGroupInviteCode(jid: string): Promise<string | undefined> {
-    if (!this.sock) throw new Error('Not connected');
+    if (!this.sock) throw new NotConnectedError();
     return this.sock.groupInviteCode(jid);
   }
 
   async groupUpdateSubject(jid: string, subject: string): Promise<void> {
-    if (!this.sock) throw new Error('Not connected');
+    if (!this.sock) throw new NotConnectedError();
     await this.sock.groupUpdateSubject(jid, subject);
   }
 
   async groupUpdateDescription(jid: string, description: string): Promise<void> {
-    if (!this.sock) throw new Error('Not connected');
+    if (!this.sock) throw new NotConnectedError();
     await this.sock.groupUpdateDescription(jid, description);
   }
 
   async groupParticipantsUpdate(jid: string, participants: string[], action: 'add' | 'remove' | 'promote' | 'demote') {
-    if (!this.sock) throw new Error('Not connected');
+    if (!this.sock) throw new NotConnectedError();
     return this.sock.groupParticipantsUpdate(jid, participants, action);
   }
 
   async downloadMedia(msg: WAMessage): Promise<Buffer> {
-    if (!this.sock) throw new Error('Not connected');
+    if (!this.sock) throw new NotConnectedError();
     return downloadMediaMessage(msg, 'buffer', {}) as Promise<Buffer>;
   }
 }

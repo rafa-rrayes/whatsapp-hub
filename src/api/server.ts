@@ -261,6 +261,8 @@ export function createServer() {
   // Global error handler — prevents stack traces from leaking to clients
   app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
     if (err instanceof ApiError) {
+      if (err.statusCode >= 500) log.api.error({ err }, 'Server error');
+      else log.api.warn({ err, statusCode: err.statusCode }, err.message);
       res.status(err.statusCode).json({ error: err.message });
       return;
     }

@@ -1,48 +1,36 @@
-import { Router, Request, Response } from 'express';
+import { Router } from 'express';
 import { chatsRepo } from '../../database/repositories/chats.js';
 import { messagesRepo } from '../../database/repositories/messages.js';
 import { clampPagination, isValidJid } from '../../utils/security.js';
-import { log } from '../../utils/logger.js';
+import { asyncHandler, NotFoundError, BadRequestError } from '../errors.js';
 
 const router = Router();
 
 // GET /api/chats — list all chats
-router.get('/', (req: Request, res: Response) => {
-  try {
-    const chats = chatsRepo.getAll({
-      search: req.query.search as string | undefined,
-      limit: clampPagination(req.query.limit, 100, 500),
-      offset: clampPagination(req.query.offset, 0, 100000),
-    });
-    res.json({ data: chats, total: chats.length });
-  } catch (err) {
-    log.api.error({ err }, 'chats list failed');
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
+router.get('/', asyncHandler(async (req, res) => {
+  const chats = chatsRepo.getAll({
+    search: req.query.search as string | undefined,
+    limit: clampPagination(req.query.limit, 100, 500),
+    offset: clampPagination(req.query.offset, 0, 100000),
+  });
+  res.json({ data: chats, total: chats.length });
+}));
 
 // GET /api/chats/:jid — single chat with recent messages
-router.get('/:jid', (req: Request, res: Response) => {
-  try {
-    if (!isValidJid(req.params.jid)) {
-      res.status(400).json({ error: 'Invalid JID format' });
-      return;
-    }
-    const chat = chatsRepo.getByJid(req.params.jid as string);
-    if (!chat) {
-      res.status(404).json({ error: 'Chat not found' });
-      return;
-    }
-    const recentMessages = messagesRepo.query({
-      remote_jid: req.params.jid as string,
-      limit: 20,
-      order: 'desc',
-    });
-    res.json({ ...chat, recent_messages: recentMessages.data });
-  } catch (err) {
-    log.api.error({ err }, 'chat detail failed');
-    res.status(500).json({ error: 'Internal server error' });
+router.get('/:jid', asyncHandler(async (req, res) => {
+  if (!isValidJid(req.params.jid)) {
+    throw new BadRequestError('Invalid JID format');
   }
-});
+  const chat = chatsRepo.getByJid(req.params.jid as string);
+  if (!chat) {
+    throw new NotFoundError('Chat not found');
+  }
+  const recentMessages = messagesRepo.query({
+    remote_jid: req.params.jid as string,
+    limit: 20,
+    order: 'desc',
+  });
+  res.json({ ...chat, recent_messages: recentMessages.data });
+}));
 
 export default router;

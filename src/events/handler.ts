@@ -1,5 +1,5 @@
-import { proto, isJidGroup, WAMessage, Contact } from '@whiskeysockets/baileys';
-import type { PresenceData } from '@whiskeysockets/baileys';
+import { proto, isJidGroup, WAMessage } from '@whiskeysockets/baileys';
+import type { BaileysEventMap, PresenceData } from '@whiskeysockets/baileys';
 import { eventBus } from './bus.js';
 import { getDb } from '../database/index.js';
 import { messagesRepo } from '../database/repositories/messages.js';
@@ -12,19 +12,7 @@ import { connectionManager } from '../connection/manager.js';
 import { normalizeJid, resolveToPhoneJid } from '../utils/jid.js';
 import { log } from '../utils/logger.js';
 import { v4 as uuid } from 'uuid';
-
-interface MediaMessageFields {
-  mimetype?: string | null;
-  fileLength?: number | Long | null;
-  fileName?: string | null;
-  seconds?: number | null;
-  width?: number | null;
-  height?: number | null;
-}
-
-interface Long {
-  toNumber(): number;
-}
+import type { MediaMessageFields, ContactWithShortName } from './types.js';
 
 function fetchGroupMetadataAsync(jid: string): void {
   connectionManager.getGroupMetadata(jid).then((metadata) => {
@@ -141,7 +129,7 @@ function getMediaInfo(msg: proto.IMessage | null | undefined) {
 export function registerEventHandlers(): void {
   // ===== MESSAGES =====
   eventBus.on('wa.messages.upsert', (event) => {
-    const { type, messages } = event.data as { type: string; messages: WAMessage[] };
+    const { type, messages } = event.data as BaileysEventMap['messages.upsert'];
 
     for (const msg of messages) {
       try {
@@ -149,8 +137,7 @@ export function registerEventHandlers(): void {
         if (!key?.id || !key?.remoteJid) continue;
 
         // Normalize LID ↔ phone JID: always prefer @s.whatsapp.net
-        const remoteJidAlt = (key as Record<string, unknown>).remoteJidAlt as string | undefined;
-        const remoteJid = normalizeJid(key.remoteJid, remoteJidAlt);
+        const remoteJid = normalizeJid(key.remoteJid, key.remoteJidAlt);
 
         const innerMsg = msg.message;
         const msgType = getMessageType(innerMsg);
@@ -272,20 +259,20 @@ export function registerEventHandlers(): void {
 
   // ===== MESSAGE UPDATES (edits, deletes) =====
   eventBus.on('wa.messages.update', (event) => {
-    const updates = event.data as Array<{ key: WAMessage['key']; update: Record<string, unknown> }>;
+    const updates = event.data as BaileysEventMap['messages.update'];
     for (const update of updates) {
       try {
-        if ((update.update as { message?: proto.IMessage }).message) {
-          const newBody = extractTextBody((update.update as { message: proto.IMessage }).message);
+        if (update.update.message) {
+          const newBody = extractTextBody(update.update.message);
           if (newBody && update.key?.id) {
             messagesRepo.markEdited(update.key.id, newBody);
             eventsRepo.log('message.edited', { id: update.key.id });
           }
         }
-        if ((update.update as { starred?: boolean }).starred !== undefined && update.key?.id) {
+        if (update.update.starred !== undefined && update.key?.id) {
           const db = getDb();
           db.prepare('UPDATE messages SET is_starred = ? WHERE id = ?').run(
-            (update.update as { starred: boolean }).starred ? 1 : 0,
+            update.update.starred ? 1 : 0,
             update.key.id
           );
         }
@@ -298,8 +285,8 @@ export function registerEventHandlers(): void {
   // ===== MESSAGE DELETES =====
   eventBus.on('wa.messages.delete', (event) => {
     try {
-      const data = event.data as { keys?: Array<{ id?: string }> };
-      if (data.keys) {
+      const data = event.data as BaileysEventMap['messages.delete'];
+      if ('keys' in data && data.keys) {
         for (const key of data.keys) {
           if (key.id) {
             messagesRepo.markDeleted(key.id);
@@ -324,15 +311,7 @@ export function registerEventHandlers(): void {
         updated_at = datetime('now')
     `);
 
-    const receipts = event.data as Array<{
-      key: { id?: string };
-      receipt: {
-        readTimestamp?: number;
-        playedTimestamp?: number;
-        receiptTimestamp?: number;
-        userJid?: string;
-      };
-    }>;
+    const receipts = event.data as BaileysEventMap['message-receipt.update'];
 
     for (const update of receipts) {
       try {
@@ -342,9 +321,11 @@ export function registerEventHandlers(): void {
             update.receipt.playedTimestamp ? 'played' :
             update.receipt.receiptTimestamp ? 'delivered' : 'sent';
 
-          const ts = update.receipt.readTimestamp ||
+          const ts = Number(
+            update.receipt.readTimestamp ||
             update.receipt.playedTimestamp ||
-            update.receipt.receiptTimestamp;
+            update.receipt.receiptTimestamp
+          );
 
           if (update.receipt.userJid) {
             stmt.run(update.key.id, update.receipt.userJid, status, ts);
@@ -359,7 +340,7 @@ export function registerEventHandlers(): void {
   // ===== PRESENCE =====
   eventBus.on('wa.presence.update', (event) => {
     const db = getDb();
-    const data = event.data as { id?: string; presences?: Record<string, PresenceData> };
+    const data = event.data as BaileysEventMap['presence.update'];
     try {
       if (data.id && data.presences) {
         for (const [jid, presence] of Object.entries(data.presences)) {
@@ -375,14 +356,14 @@ export function registerEventHandlers(): void {
 
   // ===== CONTACTS =====
   eventBus.on('wa.contacts.upsert', (event) => {
-    const contacts = event.data as Contact[];
+    const contacts = event.data as BaileysEventMap['contacts.upsert'];
     for (const contact of contacts) {
       try {
         contactsRepo.upsert({
           jid: contact.id,
           name: contact.name,
           notify_name: contact.notify,
-          short_name: (contact as unknown as Record<string, unknown>).shortName as string | undefined,
+          short_name: (contact as ContactWithShortName).shortName,
           phone_number: contact.id?.split('@')[0],
         });
       } catch (err) {
@@ -392,7 +373,7 @@ export function registerEventHandlers(): void {
   });
 
   eventBus.on('wa.contacts.update', (event) => {
-    const contacts = event.data as Partial<Contact>[];
+    const contacts = event.data as BaileysEventMap['contacts.update'];
     for (const contact of contacts) {
       try {
         if (contact.id) {
@@ -412,20 +393,18 @@ export function registerEventHandlers(): void {
 
   // ===== CHATS =====
   eventBus.on('wa.chats.upsert', (event) => {
-    const chats = event.data as Array<{
-      id: string; name?: string; archived?: boolean; pinned?: number;
-      mute?: number; unreadCount?: number;
-    }>;
+    const chats = event.data as BaileysEventMap['chats.upsert'];
     for (const chat of chats) {
       try {
+        const chatId = chat.id!;
         chatsRepo.upsert({
-          jid: chat.id,
+          jid: chatId,
           name: chat.name || undefined,
-          is_group: isJidGroup(chat.id) ? 1 : 0,
+          is_group: isJidGroup(chatId) ? 1 : 0,
           is_archived: chat.archived ? 1 : 0,
           is_pinned: chat.pinned ? 1 : 0,
-          is_muted: chat.mute ? 1 : 0,
-          mute_expiry: chat.mute || undefined,
+          is_muted: chat.muteEndTime ? 1 : 0,
+          mute_expiry: Number(chat.muteEndTime) || undefined,
           unread_count: chat.unreadCount ?? 0,
         });
       } catch (err) {
@@ -435,10 +414,7 @@ export function registerEventHandlers(): void {
   });
 
   eventBus.on('wa.chats.update', (event) => {
-    const chats = event.data as Array<{
-      id?: string; name?: string; archived?: boolean; pinned?: number;
-      mute?: number; unreadCount?: number;
-    }>;
+    const chats = event.data as BaileysEventMap['chats.update'];
     for (const chat of chats) {
       try {
         if (chat.id) {
@@ -447,8 +423,8 @@ export function registerEventHandlers(): void {
             name: chat.name || undefined,
             is_archived: chat.archived !== undefined ? (chat.archived ? 1 : 0) : undefined,
             is_pinned: chat.pinned !== undefined ? (chat.pinned ? 1 : 0) : undefined,
-            is_muted: chat.mute !== undefined ? (chat.mute ? 1 : 0) : undefined,
-            unread_count: chat.unreadCount,
+            is_muted: chat.muteEndTime !== undefined ? (chat.muteEndTime ? 1 : 0) : undefined,
+            unread_count: chat.unreadCount ?? undefined,
           });
         }
       } catch (err) {
@@ -459,11 +435,7 @@ export function registerEventHandlers(): void {
 
   // ===== GROUPS =====
   eventBus.on('wa.groups.upsert', (event) => {
-    const groups = event.data as Array<{
-      id: string; subject: string; desc?: string; owner?: string;
-      creation?: number; participants?: Array<{ id: string; admin?: string }>;
-      announce?: boolean; restrict?: boolean;
-    }>;
+    const groups = event.data as BaileysEventMap['groups.upsert'];
     for (const group of groups) {
       try {
         groupsRepo.upsert({
@@ -493,10 +465,7 @@ export function registerEventHandlers(): void {
   });
 
   eventBus.on('wa.groups.update', (event) => {
-    const groups = event.data as Array<{
-      id?: string; subject?: string; desc?: string;
-      announce?: boolean; restrict?: boolean;
-    }>;
+    const groups = event.data as BaileysEventMap['groups.update'];
     for (const group of groups) {
       try {
         if (group.id) {
@@ -516,9 +485,7 @@ export function registerEventHandlers(): void {
 
   eventBus.on('wa.group-participants.update', (event) => {
     try {
-      const { id, participants, action } = event.data as {
-        id: string; participants: string[]; action: string;
-      };
+      const { id, participants, action } = event.data as BaileysEventMap['group-participants.update'];
       eventsRepo.log('group.participants_update', { groupJid: id, participants, action });
       // Re-fetch full participant list to keep it in sync
       fetchGroupMetadataAsync(id);
@@ -530,9 +497,7 @@ export function registerEventHandlers(): void {
   // ===== CALLS =====
   eventBus.on('wa.call', (event) => {
     const db = getDb();
-    const calls = event.data as Array<{
-      id?: string; from: string; isGroup?: boolean; isVideo?: boolean; status: string;
-    }>;
+    const calls = event.data as BaileysEventMap['call'];
     for (const call of calls) {
       try {
         db.prepare(`
@@ -555,15 +520,7 @@ export function registerEventHandlers(): void {
 
   // ===== HISTORY SYNC =====
   eventBus.on('wa.messaging-history.set', (event) => {
-    const { chats, contacts, messages, isLatest } = event.data as {
-      chats?: Array<{
-        id: string; name?: string; archived?: boolean; pinned?: number;
-        mute?: number; unreadCount?: number;
-      }>;
-      contacts?: Contact[];
-      messages?: unknown[];
-      isLatest?: boolean;
-    };
+    const { chats, contacts, messages, isLatest } = event.data as BaileysEventMap['messaging-history.set'];
     log.event.info(
       { chats: chats?.length || 0, contacts: contacts?.length || 0, messages: messages?.length || 0, isLatest },
       'History sync'
@@ -573,27 +530,28 @@ export function registerEventHandlers(): void {
     if (chats) {
       for (const chat of chats) {
         try {
+          const chatId = chat.id!;
           chatsRepo.upsert({
-            jid: chat.id,
+            jid: chatId,
             name: chat.name || undefined,
-            is_group: isJidGroup(chat.id) ? 1 : 0,
+            is_group: isJidGroup(chatId) ? 1 : 0,
             is_archived: chat.archived ? 1 : 0,
             is_pinned: chat.pinned ? 1 : 0,
-            is_muted: chat.mute ? 1 : 0,
+            is_muted: chat.muteEndTime ? 1 : 0,
             unread_count: chat.unreadCount ?? 0,
           });
 
           // Create stub group entries for group chats, then fetch metadata
-          if (isJidGroup(chat.id)) {
-            const existing = groupsRepo.getByJid(chat.id);
+          if (isJidGroup(chatId)) {
+            const existing = groupsRepo.getByJid(chatId);
             if (!existing) {
               groupsRepo.upsert({
-                jid: chat.id,
+                jid: chatId,
                 name: chat.name || undefined,
                 participant_count: 0,
               });
             }
-            fetchGroupMetadataAsync(chat.id);
+            fetchGroupMetadataAsync(chatId);
           }
         } catch (err) {
           log.event.error({ err }, 'Error processing history chat');
@@ -609,7 +567,7 @@ export function registerEventHandlers(): void {
             jid: contact.id,
             name: contact.name,
             notify_name: contact.notify,
-            short_name: (contact as unknown as Record<string, unknown>).shortName as string | undefined,
+            short_name: (contact as ContactWithShortName).shortName,
             phone_number: contact.id?.split('@')[0],
           });
         } catch (err) {

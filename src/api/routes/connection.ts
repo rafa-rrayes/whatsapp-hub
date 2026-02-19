@@ -1,12 +1,12 @@
-import { Router, Request, Response } from 'express';
+import { Router } from 'express';
 import { connectionManager } from '../../connection/manager.js';
-import { log } from '../../utils/logger.js';
+import { asyncHandler, NotFoundError } from '../errors.js';
 import QRCode from 'qrcode';
 
 const router = Router();
 
 // GET /api/connection/status
-router.get('/status', (_req: Request, res: Response) => {
+router.get('/status', (_req, res) => {
   res.json({
     status: connectionManager.getStatus(),
     jid: connectionManager.getMyJid(),
@@ -15,72 +15,42 @@ router.get('/status', (_req: Request, res: Response) => {
 });
 
 // GET /api/connection/qr — get QR code as base64 image
-router.get('/qr', async (_req: Request, res: Response) => {
-  try {
-    const qr = connectionManager.getQR();
-    if (!qr) {
-      res.status(404).json({
-        error: 'No QR code available',
-        status: connectionManager.getStatus(),
-      });
-      return;
-    }
-    const dataUrl = await QRCode.toDataURL(qr);
-    res.json({ qr: dataUrl, raw: qr });
-  } catch (err) {
-    log.api.error({ err }, 'qr failed');
-    res.status(500).json({ error: 'Internal server error' });
+router.get('/qr', asyncHandler(async (_req, res) => {
+  const qr = connectionManager.getQR();
+  if (!qr) {
+    throw new NotFoundError('No QR code available');
   }
-});
+  const dataUrl = await QRCode.toDataURL(qr);
+  res.json({ qr: dataUrl, raw: qr });
+}));
 
 // GET /api/connection/qr/image — get QR code as PNG image
-router.get('/qr/image', async (_req: Request, res: Response) => {
-  try {
-    const qr = connectionManager.getQR();
-    if (!qr) {
-      res.status(404).send('No QR code available');
-      return;
-    }
-    const buffer = await QRCode.toBuffer(qr, { type: 'png', width: 400 });
-    res.setHeader('Content-Type', 'image/png');
-    res.send(buffer);
-  } catch (err) {
-    log.api.error({ err }, 'qr/image failed');
-    res.status(500).json({ error: 'Internal server error' });
+router.get('/qr/image', asyncHandler(async (_req, res) => {
+  const qr = connectionManager.getQR();
+  if (!qr) {
+    throw new NotFoundError('No QR code available');
   }
-});
+  const buffer = await QRCode.toBuffer(qr, { type: 'png', width: 400 });
+  res.setHeader('Content-Type', 'image/png');
+  res.send(buffer);
+}));
 
 // POST /api/connection/restart
-router.post('/restart', async (_req: Request, res: Response) => {
-  try {
-    await connectionManager.restart();
-    res.json({ success: true, message: 'Reconnecting...' });
-  } catch (err) {
-    log.api.error({ err }, 'restart failed');
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
+router.post('/restart', asyncHandler(async (_req, res) => {
+  await connectionManager.restart();
+  res.json({ success: true, message: 'Reconnecting...' });
+}));
 
 // POST /api/connection/new-qr — clear auth and generate a fresh QR code
-router.post('/new-qr', async (_req: Request, res: Response) => {
-  try {
-    await connectionManager.newQR();
-    res.json({ success: true, message: 'Auth cleared. Generating new QR code...' });
-  } catch (err) {
-    log.api.error({ err }, 'new-qr failed');
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
+router.post('/new-qr', asyncHandler(async (_req, res) => {
+  await connectionManager.newQR();
+  res.json({ success: true, message: 'Auth cleared. Generating new QR code...' });
+}));
 
 // POST /api/connection/logout
-router.post('/logout', async (_req: Request, res: Response) => {
-  try {
-    await connectionManager.disconnect();
-    res.json({ success: true, message: 'Logged out' });
-  } catch (err) {
-    log.api.error({ err }, 'logout failed');
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
+router.post('/logout', asyncHandler(async (_req, res) => {
+  await connectionManager.disconnect();
+  res.json({ success: true, message: 'Logged out' });
+}));
 
 export default router;

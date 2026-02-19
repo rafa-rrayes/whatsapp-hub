@@ -47,7 +47,7 @@ export function EventsPage() {
     if (isNaN(days) || days < 1) return
     pruneEvents.mutate(days, {
       onSuccess: (result) => {
-        toast.success(`Pruned ${(result as any).deleted} events`)
+        toast.success(`Pruned ${result.deleted} events`)
       },
       onError: (e) => toast.error(e.message),
     })
