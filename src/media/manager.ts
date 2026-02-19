@@ -2,6 +2,7 @@ import { proto, WAMessage } from '@whiskeysockets/baileys';
 import { connectionManager } from '../connection/manager.js';
 import { mediaRepo } from '../database/repositories/media.js';
 import { config } from '../config.js';
+import { getSettings } from '../settings.js';
 import { log } from '../utils/logger.js';
 import fs from 'fs';
 import path from 'path';
@@ -34,7 +35,7 @@ class MediaManager {
   }
 
   queueDownload(mediaId: string, msg: WAMessage): void {
-    if (!config.autoDownloadMedia) {
+    if (!getSettings().autoDownloadMedia) {
       mediaRepo.upsert({
         id: mediaId,
         message_id: msg.key?.id || undefined,
@@ -54,7 +55,8 @@ class MediaManager {
 
     const m = media as MediaMessageFields | undefined;
     const fileSize = m ? Number(m.fileLength || 0) : 0;
-    const maxBytes = config.maxMediaSizeMB * 1024 * 1024;
+    const maxMB = getSettings().maxMediaSizeMB;
+    const maxBytes = maxMB * 1024 * 1024;
 
     if (maxBytes > 0 && fileSize > maxBytes) {
       mediaRepo.upsert({
@@ -64,7 +66,7 @@ class MediaManager {
         file_size: fileSize,
         original_filename: m?.fileName ?? undefined,
         download_status: 'skipped',
-        download_error: `File size ${Math.round(fileSize / 1024 / 1024)}MB exceeds max ${config.maxMediaSizeMB}MB`,
+        download_error: `File size ${Math.round(fileSize / 1024 / 1024)}MB exceeds max ${maxMB}MB`,
       });
       return;
     }

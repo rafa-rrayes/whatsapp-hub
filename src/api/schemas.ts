@@ -86,3 +86,9 @@ export const webhookCreateSchema = z.object({
   secret: z.string().max(256, 'secret must be under 256 characters').optional(),
   events: z.string().max(1024, 'events must be under 1024 characters').optional(),
 });
+
+export const settingsUpdateSchema = z.object({
+  logLevel: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).optional(),
+  autoDownloadMedia: z.boolean().optional(),
+  maxMediaSizeMB: z.number().int().min(0).optional(),
+}).refine((d) => Object.keys(d).length > 0, { message: 'At least one setting is required' });

@@ -13,6 +13,7 @@ import {
   LogOut,
   MessageCircle,
   BookOpen,
+  Settings,
 } from "lucide-react"
 import { useAuthStore } from "@/stores/auth"
 import { Button } from "@/components/ui/button"
@@ -28,6 +29,7 @@ const navItems = [
   { to: "/events", icon: Activity, label: "Events" },
   { to: "/actions", icon: Zap, label: "Actions" },
   { to: "/connection", icon: Wifi, label: "Connection" },
+  { to: "/settings", icon: Settings, label: "Settings" },
   { to: "/api-docs", icon: BookOpen, label: "API Docs" },
 ]
 

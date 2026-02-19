@@ -12,6 +12,7 @@ import { WebhooksPage } from "@/pages/webhooks"
 import { EventsPage } from "@/pages/events"
 import { ActionsPage } from "@/pages/actions"
 import { ConnectionPage } from "@/pages/connection"
+import { SettingsPage } from "@/pages/settings"
 import { ApiDocsPage } from "@/pages/api-docs"
 
 function AuthenticatedApp() {
@@ -29,6 +30,7 @@ function AuthenticatedApp() {
         <Route path="events" element={<EventsPage />} />
         <Route path="actions" element={<ActionsPage />} />
         <Route path="connection" element={<ConnectionPage />} />
+        <Route path="settings" element={<SettingsPage />} />
         <Route path="api-docs" element={<ApiDocsPage />} />
       </Route>
     </Routes>

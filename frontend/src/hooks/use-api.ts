@@ -14,6 +14,7 @@ import type {
   EventLogEntry,
   EventTypeCount,
   Chat,
+  SettingItem,
 } from "@/lib/types"
 
 // ─── Connection ───────────────────────────────────────────────
@@ -391,5 +392,23 @@ export function useUpdateProfileStatus() {
   return useMutation({
     mutationFn: (data: { status: string }) =>
       api.put("/api/actions/profile-status", data),
+  })
+}
+
+// ─── Settings ────────────────────────────────────────────────
+
+export function useSettings() {
+  return useQuery({
+    queryKey: ["settings"],
+    queryFn: () => api.get<{ data: SettingItem[] }>("/api/settings"),
+  })
+}
+
+export function useUpdateSettings() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (data: Record<string, unknown>) =>
+      api.put<{ data: SettingItem[] }>("/api/settings", data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["settings"] }),
   })
 }

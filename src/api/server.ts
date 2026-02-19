@@ -17,6 +17,7 @@ import connectionRouter from './routes/connection.js';
 import chatsRouter from './routes/chats.js';
 import webhooksRouter from './routes/webhooks.js';
 import statsRouter from './routes/stats.js';
+import settingsRouter from './routes/settings.js';
 
 export function createServer() {
   const app = express();
@@ -132,6 +133,7 @@ export function createServer() {
   app.use('/api/chats', chatsRouter);
   app.use('/api/webhooks', webhooksRouter);
   app.use('/api/stats', statsRouter);
+  app.use('/api/settings', settingsRouter);
 
   // API docs summary
   app.get('/api', (_req, res) => {
@@ -201,6 +203,10 @@ export function createServer() {
           'GET /api/stats/events': 'Query event log',
           'GET /api/stats/events/types': 'Event type counts',
           'DELETE /api/stats/events/prune?days=': 'Prune old events',
+        },
+        settings: {
+          'GET /api/settings': 'List runtime settings with defaults',
+          'PUT /api/settings': 'Update runtime settings { logLevel?, autoDownloadMedia?, maxMediaSizeMB? }',
         },
         websocket: {
           'WS /ws?token=&events=': 'Real-time event stream (events param is optional comma-separated filter)',

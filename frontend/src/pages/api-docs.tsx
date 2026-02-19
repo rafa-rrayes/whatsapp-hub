@@ -19,7 +19,6 @@ import {
   ChevronRight,
   Lock,
   Globe,
-  Zap,
   Webhook,
   Radio,
   Heart,

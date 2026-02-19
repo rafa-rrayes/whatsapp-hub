@@ -6,6 +6,7 @@ import { webhookDispatcher } from './webhooks/dispatcher.js';
 import { createServer } from './api/server.js';
 import { closeWebSockets } from './websocket/server.js';
 import { loadJidAliases, migrateExistingJids } from './utils/jid.js';
+import { initSettings } from './settings.js';
 import { log } from './utils/logger.js';
 
 async function main() {
@@ -14,6 +15,10 @@ async function main() {
   // 1. Initialize database
   log.boot.info('Initializing database...');
   initDb();
+
+  // 1a. Load runtime settings from DB (uses .env as defaults)
+  log.boot.info('Loading runtime settings...');
+  initSettings();
 
   // 1b. Load JID aliases and migrate existing LID data
   log.boot.info('Loading JID aliases...');

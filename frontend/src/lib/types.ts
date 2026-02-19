@@ -178,3 +178,10 @@ export interface HubEvent {
   timestamp: number
   data: unknown
 }
+
+export interface SettingItem {
+  key: string
+  value: unknown
+  defaultValue: unknown
+  isOverridden: boolean
+}

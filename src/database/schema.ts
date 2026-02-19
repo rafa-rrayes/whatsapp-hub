@@ -255,5 +255,14 @@ export function applySchema(db: Database.Database): void {
       last_message_body TEXT,
       updated_at        TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    -- ============================================================
+    -- RUNTIME SETTINGS (key-value overrides; .env provides defaults)
+    -- ============================================================
+    CREATE TABLE IF NOT EXISTS settings (
+      key         TEXT PRIMARY KEY,
+      value       TEXT NOT NULL,
+      updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `);
 }
