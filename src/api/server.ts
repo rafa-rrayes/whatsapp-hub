@@ -19,6 +19,39 @@ import webhooksRouter from './routes/webhooks.js';
 import statsRouter from './routes/stats.js';
 import settingsRouter from './routes/settings.js';
 
+/**
+ * Returns true if `origin` is a loopback or RFC-1918 private address on the given port.
+ * Used as the default CORS policy so the dashboard works from LAN IPs without configuration.
+ */
+function isLocalOrPrivateOrigin(origin: string, port: number): boolean {
+  let url: URL;
+  try {
+    url = new URL(origin);
+  } catch {
+    return false;
+  }
+
+  const originPort = url.port || (url.protocol === 'https:' ? '443' : '80');
+  if (Number(originPort) !== port) return false;
+
+  const host = url.hostname;
+
+  // localhost / loopback
+  if (host === 'localhost' || host === '127.0.0.1' || host === '::1') return true;
+  if (host.endsWith('.localhost')) return true;
+
+  // IPv4 private ranges
+  const ipv4 = host.match(/^(\d+)\.(\d+)\.\d+\.\d+$/);
+  if (ipv4) {
+    const [a, b] = [Number(ipv4[1]), Number(ipv4[2])];
+    if (a === 10) return true;                          // 10.0.0.0/8
+    if (a === 172 && b >= 16 && b <= 31) return true;   // 172.16.0.0/12
+    if (a === 192 && b === 168) return true;             // 192.168.0.0/16
+  }
+
+  return false;
+}
+
 export function createServer() {
   const app = express();
 
@@ -49,32 +82,37 @@ export function createServer() {
 
   // CORS — configurable origins
   app.use((_req, res, next) => {
+    const reqOrigin = _req.headers.origin;
     const origins = config.corsOrigins;
-    if (origins && origins !== '*') {
-      const allowed = origins.split(',').map((o) => o.trim());
-      const reqOrigin = _req.headers.origin;
-      if (reqOrigin && allowed.includes(reqOrigin)) {
+
+    let allowed = false;
+
+    if (origins === '*') {
+      res.header('Access-Control-Allow-Origin', '*');
+      allowed = true;
+    } else if (origins) {
+      const list = origins.split(',').map((o) => o.trim());
+      if (reqOrigin && list.includes(reqOrigin)) {
         res.header('Access-Control-Allow-Origin', reqOrigin);
         res.header('Vary', 'Origin');
+        allowed = true;
       }
-    } else if (origins === '*') {
-      res.header('Access-Control-Allow-Origin', '*');
-    } else {
-      // Default: allow same-origin only (no header = browser blocks cross-origin)
-      const reqOrigin = _req.headers.origin;
-      if (reqOrigin) {
-        // Allow requests from the same host (dashboard)
-        const selfOrigins = [
-          `http://localhost:${config.port}`,
-          `http://127.0.0.1:${config.port}`,
-          `https://localhost:${config.port}`,
-        ];
-        if (selfOrigins.includes(reqOrigin)) {
-          res.header('Access-Control-Allow-Origin', reqOrigin);
-          res.header('Vary', 'Origin');
-        }
+    } else if (reqOrigin) {
+      // Default: allow localhost and private-network origins on the configured port
+      if (isLocalOrPrivateOrigin(reqOrigin, config.port)) {
+        res.header('Access-Control-Allow-Origin', reqOrigin);
+        res.header('Vary', 'Origin');
+        allowed = true;
       }
     }
+
+    if (!allowed && reqOrigin) {
+      log.api.warn(
+        { origin: reqOrigin },
+        'CORS request blocked — set CORS_ORIGINS in .env to allow this origin',
+      );
+    }
+
     res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
     res.header('Access-Control-Allow-Headers', 'Content-Type, x-api-key, Authorization');
     if (_req.method === 'OPTIONS') {
