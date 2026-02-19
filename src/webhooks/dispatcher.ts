@@ -16,6 +16,22 @@ class WebhookDispatcher {
   private queue: Array<{ sub: WebhookSub; event: HubEvent }> = [];
   private processing = false;
   private stopped = false;
+  private subsCache: WebhookSub[] | null = null;
+
+  /** Invalidate cached subscriptions — call after any webhook CRUD operation. */
+  invalidateCache(): void {
+    this.subsCache = null;
+  }
+
+  private getActiveSubscriptions(): WebhookSub[] {
+    if (!this.subsCache) {
+      const db = getDb();
+      this.subsCache = db
+        .prepare('SELECT * FROM webhook_subscriptions WHERE is_active = 1')
+        .all() as WebhookSub[];
+    }
+    return this.subsCache;
+  }
 
   start(): void {
     eventBus.on('*', (event: HubEvent) => {
@@ -25,10 +41,7 @@ class WebhookDispatcher {
       if (!event.type.startsWith('wa.') && !event.type.startsWith('message.') && !event.type.startsWith('call')) return;
 
       try {
-        const db = getDb();
-        const subs = db
-          .prepare('SELECT * FROM webhook_subscriptions WHERE is_active = 1')
-          .all() as WebhookSub[];
+        const subs = this.getActiveSubscriptions();
 
         for (const sub of subs) {
           // Filter by event type
