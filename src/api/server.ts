@@ -55,25 +55,34 @@ function isLocalOrPrivateOrigin(origin: string, port: number): boolean {
 export function createServer() {
   const app = express();
 
-  // Trust first proxy (required for correct rate limiting & IP detection behind reverse proxy)
-  app.set('trust proxy', 1);
+  // Trust proxy only when explicitly behind a reverse proxy (Caddy, nginx, Cloudflare, etc.)
+  if (config.behindProxy) {
+    app.set('trust proxy', 1);
+  }
 
   // Security headers
+  const cspDirectives: Record<string, string[]> = {
+    defaultSrc: ["'self'"],
+    scriptSrc: ["'self'"],
+    styleSrc: ["'self'", "'unsafe-inline'"],
+    imgSrc: ["'self'", 'data:', 'https:'],
+    connectSrc: ["'self'"],
+    fontSrc: ["'self'"],
+    frameSrc: ["'none'"],
+    objectSrc: ["'none'"],
+    baseUri: ["'self'"],
+  };
+  // upgrade-insecure-requests tells browsers to load all sub-resources over HTTPS.
+  // Only enable when a TLS-terminating reverse proxy sits in front of the app.
+  if (config.behindProxy) {
+    cspDirectives.upgradeInsecureRequests = [];
+  }
+
   app.use(helmet({
-    contentSecurityPolicy: {
-      directives: {
-        defaultSrc: ["'self'"],
-        scriptSrc: ["'self'"],
-        styleSrc: ["'self'", "'unsafe-inline'"],
-        imgSrc: ["'self'", 'data:', 'https:'],
-        connectSrc: ["'self'"],
-        fontSrc: ["'self'"],
-        frameSrc: ["'none'"],
-        objectSrc: ["'none'"],
-        baseUri: ["'self'"],
-      },
-    },
+    contentSecurityPolicy: { directives: cspDirectives },
     crossOriginEmbedderPolicy: false, // Allow loading external images
+    // HSTS forces browsers to use HTTPS for this host. Disable when serving plain HTTP.
+    strictTransportSecurity: config.behindProxy,
   }));
 
   // Body parsing with safe limits

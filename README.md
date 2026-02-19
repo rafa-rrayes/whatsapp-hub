@@ -298,8 +298,24 @@ ws.on("message", (data) => {
 | `MAX_MEDIA_SIZE_MB` | `100` | Max file size to download (0 = unlimited) |
 | `LOG_LEVEL` | `info` | Pino log level |
 | `SESSION_NAME` | `default` | Baileys auth session name |
+| `BEHIND_PROXY` | `false` | Set `true` behind a TLS reverse proxy (enables HSTS, CSP upgrade-insecure-requests, trust proxy) |
 | `WEBHOOK_URLS` | — | Comma-separated webhook URLs |
 | `WEBHOOK_SECRET` | — | HMAC secret for webhook signatures |
+
+## Reverse Proxy / HTTPS
+
+WhatsApp Hub serves plain HTTP by default. If you place it behind a TLS-terminating reverse proxy (Caddy, nginx, Cloudflare Tunnel, etc.), set:
+
+```bash
+BEHIND_PROXY=true
+```
+
+This enables:
+- **HSTS** — tells browsers to always use HTTPS for this host
+- **`upgrade-insecure-requests`** in Content-Security-Policy — tells browsers to load sub-resources over HTTPS
+- **`trust proxy`** in Express — reads the real client IP from `X-Forwarded-For`
+
+Leave it at `false` (the default) when accessing the app directly over HTTP, otherwise all asset loads will fail and you'll see a blank page.
 
 ## Data Storage
 

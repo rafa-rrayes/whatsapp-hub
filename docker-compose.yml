@@ -14,6 +14,7 @@ services:
       - MEDIA_DIR=/app/data/media
       - AUTO_DOWNLOAD_MEDIA=true
       - MAX_MEDIA_SIZE_MB=100
+      - BEHIND_PROXY=${BEHIND_PROXY:-false}
       - LOG_LEVEL=info
       - SESSION_NAME=default
       - WEBHOOK_URLS=${WEBHOOK_URLS:-}

@@ -55,6 +55,8 @@ export const config = {
     .filter(Boolean),
   webhookSecret: process.env.WEBHOOK_SECRET || '',
 
+  behindProxy: process.env.BEHIND_PROXY === 'true',
+
   logLevel: (process.env.LOG_LEVEL || 'info') as string,
   sessionName: process.env.SESSION_NAME || 'default',
 
@@ -62,6 +64,11 @@ export const config = {
     return path.join(this.dataDir, 'auth', this.sessionName);
   },
 };
+
+// Nudge toward secure setup when serving plain HTTP
+if (!config.behindProxy) {
+  process.stderr.write('[Security] WARNING: Running without HTTPS — consider using a reverse proxy for production. Set BEHIND_PROXY=true once configured.\n');
+}
 
 // Warn if webhook URLs are configured but no secret is set
 if (config.webhookUrls.length > 0 && !config.webhookSecret) {
