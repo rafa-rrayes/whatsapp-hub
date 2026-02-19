@@ -47,6 +47,11 @@ class ConnectionManager {
     return this.myJid;
   }
 
+  private requireSocket(): Socket {
+    if (!this.sock) throw new NotConnectedError();
+    return this.sock;
+  }
+
   async connect(): Promise<void> {
     if (!fs.existsSync(config.authDir)) {
       fs.mkdirSync(config.authDir, { recursive: true });
@@ -209,7 +214,7 @@ class ConnectionManager {
   // All send methods return WAMessage (Baileys v7 type) or undefined
 
   async sendTextMessage(jid: string, text: string, quotedId?: string): Promise<WAMessage | undefined> {
-    if (!this.sock) throw new NotConnectedError();
+    const sock = this.requireSocket();
     let quoted: WAMessage | undefined;
     if (quotedId) {
       try {
@@ -222,12 +227,12 @@ class ConnectionManager {
         // If DB lookup fails, skip quoting
       }
     }
-    return this.sock.sendMessage(jid, { text }, { quoted });
+    return sock.sendMessage(jid, { text }, { quoted });
   }
 
   async sendImage(jid: string, buffer: Buffer, caption?: string, mimeType?: string): Promise<WAMessage | undefined> {
-    if (!this.sock) throw new NotConnectedError();
-    return this.sock.sendMessage(jid, {
+    const sock = this.requireSocket();
+    return sock.sendMessage(jid, {
       image: buffer,
       caption,
       mimetype: mimeType,
@@ -235,8 +240,8 @@ class ConnectionManager {
   }
 
   async sendDocument(jid: string, buffer: Buffer, filename: string, mimeType: string, caption?: string): Promise<WAMessage | undefined> {
-    if (!this.sock) throw new NotConnectedError();
-    return this.sock.sendMessage(jid, {
+    const sock = this.requireSocket();
+    return sock.sendMessage(jid, {
       document: buffer,
       fileName: filename,
       mimetype: mimeType,
@@ -245,8 +250,8 @@ class ConnectionManager {
   }
 
   async sendAudio(jid: string, buffer: Buffer, ptt = false): Promise<WAMessage | undefined> {
-    if (!this.sock) throw new NotConnectedError();
-    return this.sock.sendMessage(jid, {
+    const sock = this.requireSocket();
+    return sock.sendMessage(jid, {
       audio: buffer,
       ptt,
       mimetype: 'audio/ogg; codecs=opus',
@@ -254,21 +259,21 @@ class ConnectionManager {
   }
 
   async sendVideo(jid: string, buffer: Buffer, caption?: string): Promise<WAMessage | undefined> {
-    if (!this.sock) throw new NotConnectedError();
-    return this.sock.sendMessage(jid, {
+    const sock = this.requireSocket();
+    return sock.sendMessage(jid, {
       video: buffer,
       caption,
     });
   }
 
   async sendSticker(jid: string, buffer: Buffer): Promise<WAMessage | undefined> {
-    if (!this.sock) throw new NotConnectedError();
-    return this.sock.sendMessage(jid, { sticker: buffer });
+    const sock = this.requireSocket();
+    return sock.sendMessage(jid, { sticker: buffer });
   }
 
   async sendLocation(jid: string, lat: number, lng: number, name?: string, address?: string): Promise<WAMessage | undefined> {
-    if (!this.sock) throw new NotConnectedError();
-    return this.sock.sendMessage(jid, {
+    const sock = this.requireSocket();
+    return sock.sendMessage(jid, {
       location: {
         degreesLatitude: lat,
         degreesLongitude: lng,
@@ -279,74 +284,74 @@ class ConnectionManager {
   }
 
   async sendContact(jid: string, contactJid: string, name: string): Promise<WAMessage | undefined> {
-    if (!this.sock) throw new NotConnectedError();
+    const sock = this.requireSocket();
     const safeName = sanitizeVCardField(name);
     const vcard = `BEGIN:VCARD\nVERSION:3.0\nFN:${safeName}\nTEL;type=CELL;type=VOICE;waid=${contactJid.split('@')[0]}:+${contactJid.split('@')[0]}\nEND:VCARD`;
-    return this.sock.sendMessage(jid, {
+    return sock.sendMessage(jid, {
       contacts: { displayName: name, contacts: [{ vcard }] },
     });
   }
 
   async sendReaction(jid: string, messageId: string, emoji: string): Promise<WAMessage | undefined> {
-    if (!this.sock) throw new NotConnectedError();
-    return this.sock.sendMessage(jid, {
+    const sock = this.requireSocket();
+    return sock.sendMessage(jid, {
       react: { text: emoji, key: { remoteJid: jid, id: messageId } as WAMessageKey },
     });
   }
 
   async markRead(jid: string, messageIds: string[]): Promise<void> {
-    if (!this.sock) throw new NotConnectedError();
-    await this.sock.readMessages(
+    const sock = this.requireSocket();
+    await sock.readMessages(
       messageIds.map((id) => ({ remoteJid: jid, id }) as WAMessageKey)
     );
   }
 
   async sendPresenceUpdate(type: 'available' | 'unavailable' | 'composing' | 'recording' | 'paused', jid?: string): Promise<void> {
-    if (!this.sock) throw new NotConnectedError();
-    await this.sock.sendPresenceUpdate(type, jid);
+    const sock = this.requireSocket();
+    await sock.sendPresenceUpdate(type, jid);
   }
 
   async getProfilePicUrl(jid: string): Promise<string | undefined> {
-    if (!this.sock) throw new NotConnectedError();
+    const sock = this.requireSocket();
     try {
-      return await this.sock.profilePictureUrl(jid, 'image');
+      return await sock.profilePictureUrl(jid, 'image');
     } catch {
       return undefined;
     }
   }
 
   async updateProfileStatus(status: string): Promise<void> {
-    if (!this.sock) throw new NotConnectedError();
-    await this.sock.updateProfileStatus(status);
+    const sock = this.requireSocket();
+    await sock.updateProfileStatus(status);
   }
 
   async getGroupMetadata(jid: string) {
-    if (!this.sock) throw new NotConnectedError();
-    return this.sock.groupMetadata(jid);
+    const sock = this.requireSocket();
+    return sock.groupMetadata(jid);
   }
 
   async getGroupInviteCode(jid: string): Promise<string | undefined> {
-    if (!this.sock) throw new NotConnectedError();
-    return this.sock.groupInviteCode(jid);
+    const sock = this.requireSocket();
+    return sock.groupInviteCode(jid);
   }
 
   async groupUpdateSubject(jid: string, subject: string): Promise<void> {
-    if (!this.sock) throw new NotConnectedError();
-    await this.sock.groupUpdateSubject(jid, subject);
+    const sock = this.requireSocket();
+    await sock.groupUpdateSubject(jid, subject);
   }
 
   async groupUpdateDescription(jid: string, description: string): Promise<void> {
-    if (!this.sock) throw new NotConnectedError();
-    await this.sock.groupUpdateDescription(jid, description);
+    const sock = this.requireSocket();
+    await sock.groupUpdateDescription(jid, description);
   }
 
   async groupParticipantsUpdate(jid: string, participants: string[], action: 'add' | 'remove' | 'promote' | 'demote') {
-    if (!this.sock) throw new NotConnectedError();
-    return this.sock.groupParticipantsUpdate(jid, participants, action);
+    const sock = this.requireSocket();
+    return sock.groupParticipantsUpdate(jid, participants, action);
   }
 
   async downloadMedia(msg: WAMessage): Promise<Buffer> {
-    if (!this.sock) throw new NotConnectedError();
+    this.requireSocket();
     return downloadMediaMessage(msg, 'buffer', {}) as Promise<Buffer>;
   }
 }
