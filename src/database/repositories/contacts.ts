@@ -59,6 +59,6 @@ export const contactsRepo = {
   },
 
   getCount(): number {
-    return (getDb().prepare('SELECT COUNT(*) as c FROM contacts WHERE is_group = 0').get() as any).c;
+    return (getDb().prepare('SELECT COUNT(*) as c FROM contacts WHERE is_group = 0').get() as { c: number }).c;
   },
 };

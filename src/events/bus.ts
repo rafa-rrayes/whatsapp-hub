@@ -3,15 +3,15 @@ import { EventEmitter } from 'events';
 export interface HubEvent {
   type: string;
   timestamp: number;
-  data: any;
+  data: unknown;
 }
 
 class EventBus extends EventEmitter {
-  emit(event: string, ...args: any[]): boolean {
+  emit(event: string, ...args: unknown[]): boolean {
     return super.emit(event, ...args);
   }
 
-  publish(type: string, data: any): void {
+  publish(type: string, data: unknown): void {
     const hubEvent: HubEvent = {
       type,
       timestamp: Date.now(),

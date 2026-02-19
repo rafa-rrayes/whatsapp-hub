@@ -4,6 +4,7 @@ import { WebSocket } from 'ws';
 import { eventBus, HubEvent } from '../events/bus.js';
 import { config } from '../config.js';
 import { timingSafeEqual } from '../utils/security.js';
+import { log } from '../utils/logger.js';
 
 const MAX_CONNECTIONS = 20;
 const activeConnections = new Set<WebSocket>();
@@ -35,7 +36,10 @@ export function setupWebSocket(app: Application): void {
       ? (req.query.events as string).split(',').map((e) => e.trim())
       : null;
 
-    console.log('[WS] Client connected', filterEvents ? `(filter: ${filterEvents.join(', ')})` : '(all events)', `(${activeConnections.size} active)`);
+    log.ws.info(
+      { filter: filterEvents, active: activeConnections.size },
+      'Client connected'
+    );
 
     const handler = (event: HubEvent) => {
       if (ws.readyState !== ws.OPEN) return;
@@ -48,7 +52,7 @@ export function setupWebSocket(app: Application): void {
       try {
         ws.send(JSON.stringify(event));
       } catch (err) {
-        console.error('[WS] Error sending:', err);
+        log.ws.error({ err }, 'Error sending message');
       }
     };
 
@@ -60,7 +64,7 @@ export function setupWebSocket(app: Application): void {
     ws.on('close', () => {
       activeConnections.delete(ws);
       eventBus.removeListener('*', handler);
-      console.log('[WS] Client disconnected', `(${activeConnections.size} active)`);
+      log.ws.info({ active: activeConnections.size }, 'Client disconnected');
     });
 
     ws.on('error', () => {
@@ -78,5 +82,12 @@ export function setupWebSocket(app: Application): void {
     );
   });
 
-  console.log('[WS] WebSocket server ready at /ws');
+  log.ws.info('WebSocket server ready at /ws');
+}
+
+export function closeWebSockets(): void {
+  for (const ws of activeConnections) {
+    ws.close(1001, 'Server shutting down');
+  }
+  activeConnections.clear();
 }

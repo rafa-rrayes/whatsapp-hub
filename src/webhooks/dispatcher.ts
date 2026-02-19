@@ -1,5 +1,6 @@
 import { eventBus, HubEvent } from '../events/bus.js';
 import { getDb } from '../database/index.js';
+import { log } from '../utils/logger.js';
 import crypto from 'crypto';
 
 interface WebhookSub {
@@ -14,9 +15,12 @@ class WebhookDispatcher {
   private readonly MAX_QUEUE_SIZE = 10000;
   private queue: Array<{ sub: WebhookSub; event: HubEvent }> = [];
   private processing = false;
+  private stopped = false;
 
   start(): void {
     eventBus.on('*', (event: HubEvent) => {
+      if (this.stopped) return;
+
       // Don't forward internal connection events or audit log events
       if (!event.type.startsWith('wa.') && !event.type.startsWith('message.') && !event.type.startsWith('call')) return;
 
@@ -33,7 +37,7 @@ class WebhookDispatcher {
             if (!allowedEvents.some((e) => event.type.startsWith(e))) continue;
           }
           if (this.queue.length >= this.MAX_QUEUE_SIZE) {
-            console.warn(`[Webhook] Queue full (${this.MAX_QUEUE_SIZE}), dropping event ${event.type}`);
+            log.webhook.warn({ maxSize: this.MAX_QUEUE_SIZE, eventType: event.type }, 'Queue full, dropping event');
             continue;
           }
           this.queue.push({ sub, event });
@@ -45,7 +49,7 @@ class WebhookDispatcher {
       }
     });
 
-    console.log('[Webhooks] Dispatcher started.');
+    log.webhook.info('Dispatcher started');
   }
 
   private async processQueue(): Promise<void> {
@@ -87,10 +91,18 @@ class WebhookDispatcher {
       });
 
       if (!resp.ok) {
-        console.warn(`[Webhook] ${sub.url} returned ${resp.status} for ${event.type}`);
+        log.webhook.warn({ url: sub.url, status: resp.status, eventType: event.type }, 'Webhook returned non-OK status');
       }
     } catch (err) {
-      console.warn(`[Webhook] Failed to send to ${sub.url}: ${err}`);
+      log.webhook.warn({ err, url: sub.url }, 'Failed to send webhook');
+    }
+  }
+
+  async drain(): Promise<void> {
+    this.stopped = true;
+    if (this.queue.length > 0) {
+      log.webhook.info({ remaining: this.queue.length }, 'Draining webhook queue');
+      await this.processQueue();
     }
   }
 }

@@ -4,46 +4,61 @@ import { connectionManager } from './connection/manager.js';
 import { registerEventHandlers } from './events/handler.js';
 import { webhookDispatcher } from './webhooks/dispatcher.js';
 import { createServer } from './api/server.js';
+import { closeWebSockets } from './websocket/server.js';
 import { loadJidAliases, migrateExistingJids } from './utils/jid.js';
+import { log } from './utils/logger.js';
 
 async function main() {
-  console.log('='.repeat(50));
-  console.log('  WhatsApp Hub — Personal WhatsApp API');
-  console.log('='.repeat(50));
+  log.boot.info('WhatsApp Hub — Personal WhatsApp API');
 
   // 1. Initialize database
-  console.log('\n[Boot] Initializing database...');
+  log.boot.info('Initializing database...');
   initDb();
 
   // 1b. Load JID aliases and migrate existing LID data
-  console.log('[Boot] Loading JID aliases...');
+  log.boot.info('Loading JID aliases...');
   loadJidAliases();
   migrateExistingJids();
 
   // 2. Register event handlers (DB writes)
-  console.log('[Boot] Registering event handlers...');
+  log.boot.info('Registering event handlers...');
   registerEventHandlers();
 
   // 3. Start webhook dispatcher
-  console.log('[Boot] Starting webhook dispatcher...');
+  log.boot.info('Starting webhook dispatcher...');
   webhookDispatcher.start();
 
   // 4. Start API server
-  console.log('[Boot] Starting API server...');
+  log.boot.info('Starting API server...');
   const app = createServer();
-  app.listen(config.port, config.host, () => {
-    console.log(`[API] Server listening on http://${config.host}:${config.port}`);
-    console.log(`[API] API docs at http://localhost:${config.port}/api`);
+  const server = app.listen(config.port, config.host, () => {
+    log.boot.info({ host: config.host, port: config.port }, 'Server listening');
   });
 
   // 5. Connect to WhatsApp
-  console.log('[Boot] Connecting to WhatsApp...');
+  log.boot.info('Connecting to WhatsApp...');
   await connectionManager.connect();
 
   // Graceful shutdown
   const shutdown = async () => {
-    console.log('\n[Shutdown] Shutting down...');
+    log.boot.info('Shutting down...');
+
+    // 1. Stop accepting new connections
+    server.close();
+
+    // 2. Close WebSocket connections
+    closeWebSockets();
+
+    // 3. Disconnect WhatsApp cleanly
+    await connectionManager.disconnect();
+
+    // 4. Flush webhook queue
+    await webhookDispatcher.drain();
+
+    // 5. Close database
     closeDb();
+
+    log.boot.info('Shutdown complete');
     process.exit(0);
   };
 
@@ -52,20 +67,20 @@ async function main() {
 
   // Catch unhandled errors to prevent silent crashes
   process.on('unhandledRejection', (reason) => {
-    console.error('[Process] Unhandled promise rejection:', reason);
+    log.boot.error({ reason }, 'Unhandled promise rejection');
   });
   process.on('uncaughtException', (err) => {
-    console.error('[Process] Uncaught exception:', err);
+    log.boot.fatal({ err }, 'Uncaught exception');
     process.exit(1);
   });
 
-  console.log('\n[Boot] WhatsApp Hub is running!');
-  console.log(`[Boot] API Key: configured (${config.apiKey.length} chars)`);
-  console.log(`[Boot] Data dir: ${config.dataDir}`);
-  console.log('[Boot] Scan the QR code with WhatsApp to connect.\n');
+  log.boot.info({
+    apiKeyLength: config.apiKey.length,
+    dataDir: config.dataDir,
+  }, 'WhatsApp Hub is running! Scan the QR code with WhatsApp to connect.');
 }
 
 main().catch((err) => {
-  console.error('Fatal error:', err);
+  log.boot.fatal({ err }, 'Fatal error');
   process.exit(1);
 });

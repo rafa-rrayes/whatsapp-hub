@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { messagesRepo } from '../../database/repositories/messages.js';
 import { clampPagination } from '../../utils/security.js';
+import { log } from '../../utils/logger.js';
 
 const router = Router();
 
@@ -23,7 +24,8 @@ router.get('/', (req: Request, res: Response) => {
     });
     res.json(result);
   } catch (err) {
-    console.error('[API]', err); res.status(500).json({ error: 'Internal server error' });
+    log.api.error({ err }, 'messages query failed');
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -43,7 +45,8 @@ router.get('/search', (req: Request, res: Response) => {
     });
     res.json(result);
   } catch (err) {
-    console.error('[API]', err); res.status(500).json({ error: 'Internal server error' });
+    log.api.error({ err }, 'messages search failed');
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -52,7 +55,8 @@ router.get('/stats', (_req: Request, res: Response) => {
   try {
     res.json(messagesRepo.getStats());
   } catch (err) {
-    console.error('[API]', err); res.status(500).json({ error: 'Internal server error' });
+    log.api.error({ err }, 'messages stats failed');
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -66,7 +70,8 @@ router.get('/:id', (req: Request, res: Response) => {
     }
     res.json(msg);
   } catch (err) {
-    console.error('[API]', err); res.status(500).json({ error: 'Internal server error' });
+    log.api.error({ err }, 'message detail failed');
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 

@@ -2,10 +2,24 @@ import { proto, WAMessage } from '@whiskeysockets/baileys';
 import { connectionManager } from '../connection/manager.js';
 import { mediaRepo } from '../database/repositories/media.js';
 import { config } from '../config.js';
+import { log } from '../utils/logger.js';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import mime from 'mime-types';
+
+interface MediaMessageFields {
+  mimetype?: string | null;
+  fileLength?: number | Long | null;
+  fileName?: string | null;
+  seconds?: number | null;
+  width?: number | null;
+  height?: number | null;
+}
+
+interface Long {
+  toNumber(): number;
+}
 
 class MediaManager {
   private readonly MAX_QUEUE_SIZE = 5000;
@@ -38,16 +52,17 @@ class MediaManager {
       innerMsg?.stickerMessage ||
       innerMsg?.documentWithCaptionMessage?.message?.documentMessage;
 
-    const fileSize = media ? Number((media as any).fileLength || 0) : 0;
+    const m = media as MediaMessageFields | undefined;
+    const fileSize = m ? Number(m.fileLength || 0) : 0;
     const maxBytes = config.maxMediaSizeMB * 1024 * 1024;
 
     if (maxBytes > 0 && fileSize > maxBytes) {
       mediaRepo.upsert({
         id: mediaId,
         message_id: msg.key?.id || undefined,
-        mime_type: (media as any)?.mimetype,
+        mime_type: m?.mimetype ?? undefined,
         file_size: fileSize,
-        original_filename: (media as any)?.fileName,
+        original_filename: m?.fileName ?? undefined,
         download_status: 'skipped',
         download_error: `File size ${Math.round(fileSize / 1024 / 1024)}MB exceeds max ${config.maxMediaSizeMB}MB`,
       });
@@ -57,17 +72,17 @@ class MediaManager {
     mediaRepo.upsert({
       id: mediaId,
       message_id: msg.key?.id || undefined,
-      mime_type: (media as any)?.mimetype,
+      mime_type: m?.mimetype ?? undefined,
       file_size: fileSize,
-      original_filename: (media as any)?.fileName,
-      width: (media as any)?.width ? Number((media as any).width) : undefined,
-      height: (media as any)?.height ? Number((media as any).height) : undefined,
-      duration: (media as any)?.seconds ? Number((media as any).seconds) : undefined,
+      original_filename: m?.fileName ?? undefined,
+      width: m?.width ? Number(m.width) : undefined,
+      height: m?.height ? Number(m.height) : undefined,
+      duration: m?.seconds ? Number(m.seconds) : undefined,
       download_status: 'pending',
     });
 
     if (this.queue.length >= this.MAX_QUEUE_SIZE) {
-      console.warn(`[Media] Download queue full (${this.MAX_QUEUE_SIZE}), dropping new item`);
+      log.media.warn({ maxSize: this.MAX_QUEUE_SIZE }, 'Download queue full, dropping new item');
       return;
     }
 
@@ -85,7 +100,7 @@ class MediaManager {
       try {
         await this.downloadMedia(item.mediaId, item.msg);
       } catch (err) {
-        console.error(`[Media] Failed to download ${item.mediaId}:`, err);
+        log.media.error({ err, mediaId: item.mediaId }, 'Failed to download media');
         mediaRepo.updateStatus(item.mediaId, 'failed', String(err));
       }
 
@@ -108,7 +123,8 @@ class MediaManager {
       innerMsg?.stickerMessage ||
       innerMsg?.documentWithCaptionMessage?.message?.documentMessage;
 
-    const mimeType = (media as any)?.mimetype || 'application/octet-stream';
+    const m = media as MediaMessageFields | undefined;
+    const mimeType = m?.mimetype || 'application/octet-stream';
     const ext = mime.extension(mimeType) || 'bin';
 
     // Create date-based subdirectory
@@ -135,7 +151,7 @@ class MediaManager {
       download_status: 'downloaded',
     });
 
-    console.log(`[Media] Downloaded: ${relativePath} (${Math.round(buffer.length / 1024)}KB)`);
+    log.media.info({ path: relativePath, sizeKB: Math.round(buffer.length / 1024) }, 'Downloaded media');
   }
 
   getMediaPath(relativePath: string): string {

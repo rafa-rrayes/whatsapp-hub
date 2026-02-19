@@ -1,4 +1,5 @@
-import { proto, isJidGroup, WAMessage } from '@whiskeysockets/baileys';
+import { proto, isJidGroup, WAMessage, Contact } from '@whiskeysockets/baileys';
+import type { PresenceData } from '@whiskeysockets/baileys';
 import { eventBus } from './bus.js';
 import { getDb } from '../database/index.js';
 import { messagesRepo } from '../database/repositories/messages.js';
@@ -9,7 +10,21 @@ import { eventsRepo } from '../database/repositories/events.js';
 import { mediaManager } from '../media/manager.js';
 import { connectionManager } from '../connection/manager.js';
 import { normalizeJid, resolveToPhoneJid } from '../utils/jid.js';
+import { log } from '../utils/logger.js';
 import { v4 as uuid } from 'uuid';
+
+interface MediaMessageFields {
+  mimetype?: string | null;
+  fileLength?: number | Long | null;
+  fileName?: string | null;
+  seconds?: number | null;
+  width?: number | null;
+  height?: number | null;
+}
+
+interface Long {
+  toNumber(): number;
+}
 
 function fetchGroupMetadataAsync(jid: string): void {
   connectionManager.getGroupMetadata(jid).then((metadata) => {
@@ -27,7 +42,7 @@ function fetchGroupMetadataAsync(jid: string): void {
       if (metadata.participants) {
         groupsRepo.setParticipants(
           metadata.id,
-          metadata.participants.map((p: any) => ({
+          metadata.participants.map((p) => ({
             jid: p.id,
             role: p.admin || 'member',
           }))
@@ -43,7 +58,7 @@ function fetchGroupMetadataAsync(jid: string): void {
       }
     }
   }).catch((err) => {
-    console.error(`[EventHandler] Failed to fetch metadata for group ${jid}:`, err);
+    log.event.error({ err, groupJid: jid }, 'Failed to fetch group metadata');
   });
 }
 
@@ -112,28 +127,29 @@ function getMediaInfo(msg: proto.IMessage | null | undefined) {
 
   if (!media) return {};
 
+  const m = media as MediaMessageFields;
   return {
-    mime_type: (media as any).mimetype,
-    size: (media as any).fileLength ? Number((media as any).fileLength) : undefined,
-    filename: (media as any).fileName,
-    duration: (media as any).seconds ? Number((media as any).seconds) : undefined,
-    width: (media as any).width ? Number((media as any).width) : undefined,
-    height: (media as any).height ? Number((media as any).height) : undefined,
+    mime_type: m.mimetype ?? undefined,
+    size: m.fileLength ? Number(m.fileLength) : undefined,
+    filename: m.fileName ?? undefined,
+    duration: m.seconds ? Number(m.seconds) : undefined,
+    width: m.width ? Number(m.width) : undefined,
+    height: m.height ? Number(m.height) : undefined,
   };
 }
 
 export function registerEventHandlers(): void {
   // ===== MESSAGES =====
   eventBus.on('wa.messages.upsert', (event) => {
-    const { type, messages } = event.data;
+    const { type, messages } = event.data as { type: string; messages: WAMessage[] };
 
-    for (const msg of messages as WAMessage[]) {
+    for (const msg of messages) {
       try {
         const key = msg.key;
         if (!key?.id || !key?.remoteJid) continue;
 
         // Normalize LID ↔ phone JID: always prefer @s.whatsapp.net
-        const remoteJidAlt = (key as any).remoteJidAlt as string | undefined;
+        const remoteJidAlt = (key as Record<string, unknown>).remoteJidAlt as string | undefined;
         const remoteJid = normalizeJid(key.remoteJid, remoteJidAlt);
 
         const innerMsg = msg.message;
@@ -201,8 +217,8 @@ export function registerEventHandlers(): void {
             : undefined,
           latitude: location?.degreesLatitude || undefined,
           longitude: location?.degreesLongitude || undefined,
-          location_name: (location as any)?.name || undefined,
-          location_address: (location as any)?.address || undefined,
+          location_name: innerMsg?.locationMessage?.name || undefined,
+          location_address: innerMsg?.locationMessage?.address || undefined,
           raw_message: JSON.stringify(msg),
         });
 
@@ -249,31 +265,32 @@ export function registerEventHandlers(): void {
           fromMe: key.fromMe,
         });
       } catch (err) {
-        console.error('[EventHandler] Error processing message:', err);
+        log.event.error({ err }, 'Error processing message');
       }
     }
   });
 
   // ===== MESSAGE UPDATES (edits, deletes) =====
   eventBus.on('wa.messages.update', (event) => {
-    for (const update of event.data) {
+    const updates = event.data as Array<{ key: WAMessage['key']; update: Record<string, unknown> }>;
+    for (const update of updates) {
       try {
-        if (update.update?.message) {
-          const newBody = extractTextBody(update.update.message);
+        if ((update.update as { message?: proto.IMessage }).message) {
+          const newBody = extractTextBody((update.update as { message: proto.IMessage }).message);
           if (newBody && update.key?.id) {
             messagesRepo.markEdited(update.key.id, newBody);
             eventsRepo.log('message.edited', { id: update.key.id });
           }
         }
-        if (update.update?.starred !== undefined && update.key?.id) {
+        if ((update.update as { starred?: boolean }).starred !== undefined && update.key?.id) {
           const db = getDb();
           db.prepare('UPDATE messages SET is_starred = ? WHERE id = ?').run(
-            update.update.starred ? 1 : 0,
+            (update.update as { starred: boolean }).starred ? 1 : 0,
             update.key.id
           );
         }
       } catch (err) {
-        console.error('[EventHandler] Error processing message update:', err);
+        log.event.error({ err }, 'Error processing message update');
       }
     }
   });
@@ -281,8 +298,8 @@ export function registerEventHandlers(): void {
   // ===== MESSAGE DELETES =====
   eventBus.on('wa.messages.delete', (event) => {
     try {
-      const data = event.data;
-      if ('keys' in data) {
+      const data = event.data as { keys?: Array<{ id?: string }> };
+      if (data.keys) {
         for (const key of data.keys) {
           if (key.id) {
             messagesRepo.markDeleted(key.id);
@@ -291,7 +308,7 @@ export function registerEventHandlers(): void {
         }
       }
     } catch (err) {
-      console.error('[EventHandler] Error processing message delete:', err);
+      log.event.error({ err }, 'Error processing message delete');
     }
   });
 
@@ -307,7 +324,17 @@ export function registerEventHandlers(): void {
         updated_at = datetime('now')
     `);
 
-    for (const update of event.data) {
+    const receipts = event.data as Array<{
+      key: { id?: string };
+      receipt: {
+        readTimestamp?: number;
+        playedTimestamp?: number;
+        receiptTimestamp?: number;
+        userJid?: string;
+      };
+    }>;
+
+    for (const update of receipts) {
       try {
         if (update.key?.id && update.receipt) {
           const status =
@@ -324,7 +351,7 @@ export function registerEventHandlers(): void {
           }
         }
       } catch (err) {
-        console.error('[EventHandler] Error processing receipt:', err);
+        log.event.error({ err }, 'Error processing receipt');
       }
     }
   });
@@ -332,59 +359,64 @@ export function registerEventHandlers(): void {
   // ===== PRESENCE =====
   eventBus.on('wa.presence.update', (event) => {
     const db = getDb();
-    const data = event.data;
+    const data = event.data as { id?: string; presences?: Record<string, PresenceData> };
     try {
       if (data.id && data.presences) {
         for (const [jid, presence] of Object.entries(data.presences)) {
-          const p = presence as any;
           db.prepare(
             'INSERT INTO presence_log (jid, status, last_seen) VALUES (?, ?, ?)'
-          ).run(jid, p.lastKnownPresence, p.lastSeen || null);
+          ).run(jid, presence.lastKnownPresence, presence.lastSeen || null);
         }
       }
     } catch (err) {
-      console.error('[EventHandler] Error processing presence:', err);
+      log.event.error({ err }, 'Error processing presence');
     }
   });
 
   // ===== CONTACTS =====
   eventBus.on('wa.contacts.upsert', (event) => {
-    for (const contact of event.data) {
+    const contacts = event.data as Contact[];
+    for (const contact of contacts) {
       try {
         contactsRepo.upsert({
           jid: contact.id,
           name: contact.name,
           notify_name: contact.notify,
-          short_name: contact.shortName,
+          short_name: (contact as unknown as Record<string, unknown>).shortName as string | undefined,
           phone_number: contact.id?.split('@')[0],
         });
       } catch (err) {
-        console.error('[EventHandler] Error processing contact:', err);
+        log.event.error({ err }, 'Error processing contact');
       }
     }
   });
 
   eventBus.on('wa.contacts.update', (event) => {
-    for (const contact of event.data) {
+    const contacts = event.data as Partial<Contact>[];
+    for (const contact of contacts) {
       try {
         if (contact.id) {
           contactsRepo.upsert({
             jid: contact.id,
-            name: (contact as any).name,
-            notify_name: (contact as any).notify,
-            status_text: (contact as any).status,
-            profile_pic_url: (contact as any).imgUrl,
+            name: contact.name,
+            notify_name: contact.notify,
+            status_text: contact.status ?? undefined,
+            profile_pic_url: contact.imgUrl ?? undefined,
           });
         }
       } catch (err) {
-        console.error('[EventHandler] Error processing contact update:', err);
+        log.event.error({ err }, 'Error processing contact update');
       }
     }
   });
 
   // ===== CHATS =====
   eventBus.on('wa.chats.upsert', (event) => {
-    for (const chat of event.data) {
+    const chats = event.data as Array<{
+      id: string; name?: string; archived?: boolean; pinned?: number;
+      mute?: number; unreadCount?: number;
+    }>;
+    for (const chat of chats) {
       try {
         chatsRepo.upsert({
           jid: chat.id,
@@ -397,13 +429,17 @@ export function registerEventHandlers(): void {
           unread_count: chat.unreadCount ?? 0,
         });
       } catch (err) {
-        console.error('[EventHandler] Error processing chat:', err);
+        log.event.error({ err }, 'Error processing chat');
       }
     }
   });
 
   eventBus.on('wa.chats.update', (event) => {
-    for (const chat of event.data) {
+    const chats = event.data as Array<{
+      id?: string; name?: string; archived?: boolean; pinned?: number;
+      mute?: number; unreadCount?: number;
+    }>;
+    for (const chat of chats) {
       try {
         if (chat.id) {
           chatsRepo.upsert({
@@ -416,14 +452,19 @@ export function registerEventHandlers(): void {
           });
         }
       } catch (err) {
-        console.error('[EventHandler] Error processing chat update:', err);
+        log.event.error({ err }, 'Error processing chat update');
       }
     }
   });
 
   // ===== GROUPS =====
   eventBus.on('wa.groups.upsert', (event) => {
-    for (const group of event.data) {
+    const groups = event.data as Array<{
+      id: string; subject: string; desc?: string; owner?: string;
+      creation?: number; participants?: Array<{ id: string; admin?: string }>;
+      announce?: boolean; restrict?: boolean;
+    }>;
+    for (const group of groups) {
       try {
         groupsRepo.upsert({
           jid: group.id,
@@ -439,20 +480,24 @@ export function registerEventHandlers(): void {
         if (group.participants) {
           groupsRepo.setParticipants(
             group.id,
-            group.participants.map((p: any) => ({
+            group.participants.map((p) => ({
               jid: p.id,
               role: p.admin || 'member',
             }))
           );
         }
       } catch (err) {
-        console.error('[EventHandler] Error processing group:', err);
+        log.event.error({ err }, 'Error processing group');
       }
     }
   });
 
   eventBus.on('wa.groups.update', (event) => {
-    for (const group of event.data) {
+    const groups = event.data as Array<{
+      id?: string; subject?: string; desc?: string;
+      announce?: boolean; restrict?: boolean;
+    }>;
+    for (const group of groups) {
       try {
         if (group.id) {
           groupsRepo.upsert({
@@ -464,26 +509,31 @@ export function registerEventHandlers(): void {
           });
         }
       } catch (err) {
-        console.error('[EventHandler] Error processing group update:', err);
+        log.event.error({ err }, 'Error processing group update');
       }
     }
   });
 
   eventBus.on('wa.group-participants.update', (event) => {
     try {
-      const { id, participants, action } = event.data;
+      const { id, participants, action } = event.data as {
+        id: string; participants: string[]; action: string;
+      };
       eventsRepo.log('group.participants_update', { groupJid: id, participants, action });
       // Re-fetch full participant list to keep it in sync
       fetchGroupMetadataAsync(id);
     } catch (err) {
-      console.error('[EventHandler] Error processing group participants update:', err);
+      log.event.error({ err }, 'Error processing group participants update');
     }
   });
 
   // ===== CALLS =====
   eventBus.on('wa.call', (event) => {
     const db = getDb();
-    for (const call of event.data) {
+    const calls = event.data as Array<{
+      id?: string; from: string; isGroup?: boolean; isVideo?: boolean; status: string;
+    }>;
+    for (const call of calls) {
       try {
         db.prepare(`
           INSERT OR REPLACE INTO call_log (id, from_jid, is_group, is_video, status, timestamp)
@@ -498,16 +548,25 @@ export function registerEventHandlers(): void {
         );
         eventsRepo.log('call', { from: call.from, status: call.status, isVideo: call.isVideo });
       } catch (err) {
-        console.error('[EventHandler] Error processing call:', err);
+        log.event.error({ err }, 'Error processing call');
       }
     }
   });
 
   // ===== HISTORY SYNC =====
   eventBus.on('wa.messaging-history.set', (event) => {
-    const { chats, contacts, messages, isLatest } = event.data;
-    console.log(
-      `[History] Syncing: ${chats?.length || 0} chats, ${contacts?.length || 0} contacts, ${messages?.length || 0} messages (isLatest: ${isLatest})`
+    const { chats, contacts, messages, isLatest } = event.data as {
+      chats?: Array<{
+        id: string; name?: string; archived?: boolean; pinned?: number;
+        mute?: number; unreadCount?: number;
+      }>;
+      contacts?: Contact[];
+      messages?: unknown[];
+      isLatest?: boolean;
+    };
+    log.event.info(
+      { chats: chats?.length || 0, contacts: contacts?.length || 0, messages: messages?.length || 0, isLatest },
+      'History sync'
     );
 
     // Process chats from history sync
@@ -537,7 +596,7 @@ export function registerEventHandlers(): void {
             fetchGroupMetadataAsync(chat.id);
           }
         } catch (err) {
-          console.error('[EventHandler] Error processing history chat:', err);
+          log.event.error({ err }, 'Error processing history chat');
         }
       }
     }
@@ -550,11 +609,11 @@ export function registerEventHandlers(): void {
             jid: contact.id,
             name: contact.name,
             notify_name: contact.notify,
-            short_name: contact.shortName,
+            short_name: (contact as unknown as Record<string, unknown>).shortName as string | undefined,
             phone_number: contact.id?.split('@')[0],
           });
         } catch (err) {
-          console.error('[EventHandler] Error processing history contact:', err);
+          log.event.error({ err }, 'Error processing history contact');
         }
       }
     }
@@ -581,5 +640,5 @@ export function registerEventHandlers(): void {
     }
   });
 
-  console.log('[EventHandler] All event handlers registered.');
+  log.event.info('All event handlers registered');
 }

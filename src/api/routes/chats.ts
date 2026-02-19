@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { chatsRepo } from '../../database/repositories/chats.js';
 import { messagesRepo } from '../../database/repositories/messages.js';
 import { clampPagination, isValidJid } from '../../utils/security.js';
+import { log } from '../../utils/logger.js';
 
 const router = Router();
 
@@ -15,7 +16,8 @@ router.get('/', (req: Request, res: Response) => {
     });
     res.json({ data: chats, total: chats.length });
   } catch (err) {
-    console.error('[API]', err); res.status(500).json({ error: 'Internal server error' });
+    log.api.error({ err }, 'chats list failed');
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -38,7 +40,8 @@ router.get('/:jid', (req: Request, res: Response) => {
     });
     res.json({ ...chat, recent_messages: recentMessages.data });
   } catch (err) {
-    console.error('[API]', err); res.status(500).json({ error: 'Internal server error' });
+    log.api.error({ err }, 'chat detail failed');
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 

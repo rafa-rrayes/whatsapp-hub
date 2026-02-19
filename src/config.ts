@@ -9,18 +9,20 @@ const rawApiKey = process.env.API_KEY || '';
 
 if (!rawApiKey || isInsecureDefaultKey(rawApiKey)) {
   const generated = generateSecureKey();
-  console.error('='.repeat(60));
-  console.error('  SECURITY ERROR: API_KEY is not set or uses an insecure default.');
-  console.error('  Set a strong, random API_KEY in your .env file or environment.');
-  console.error('');
-  console.error('  Here is a generated key you can use:');
-  console.error(`  API_KEY=${generated}`);
-  console.error('='.repeat(60));
+  const sep = '='.repeat(60);
+  process.stderr.write(
+    `${sep}\n` +
+    '  SECURITY ERROR: API_KEY is not set or uses an insecure default.\n' +
+    '  Set a strong, random API_KEY in your .env file or environment.\n\n' +
+    '  Here is a generated key you can use:\n' +
+    `  API_KEY=${generated}\n` +
+    `${sep}\n`
+  );
   process.exit(1);
 }
 
 if (rawApiKey.length < 16) {
-  console.error('SECURITY ERROR: API_KEY must be at least 16 characters long.');
+  process.stderr.write('SECURITY ERROR: API_KEY must be at least 16 characters long.\n');
   process.exit(1);
 }
 
@@ -57,5 +59,6 @@ export const config = {
 
 // Warn if webhook URLs are configured but no secret is set
 if (config.webhookUrls.length > 0 && !config.webhookSecret) {
-  console.warn('[Security] WARNING: Webhook URLs configured without WEBHOOK_SECRET. Payloads will be unsigned.');
+  // Logger may not be initialized yet at config load time, use stderr
+  process.stderr.write('[Security] WARNING: Webhook URLs configured without WEBHOOK_SECRET. Payloads will be unsigned.\n');
 }

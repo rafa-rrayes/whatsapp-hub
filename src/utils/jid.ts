@@ -1,4 +1,5 @@
 import { getDb } from '../database/index.js';
+import { log } from './logger.js';
 
 // In-memory bidirectional cache for fast lookups
 const lidToPhone = new Map<string, string>();
@@ -75,7 +76,7 @@ export function loadJidAliases(): void {
     lidToPhone.set(row.lid, row.phone_jid);
     phoneToLid.set(row.phone_jid, row.lid);
   }
-  console.log(`[JID] Loaded ${rows.length} JID aliases`);
+  log.jid.info({ count: rows.length }, 'Loaded JID aliases');
 }
 
 /**
@@ -126,11 +127,11 @@ export function migrateExistingJids(): void {
   }
 
   if (aliasCount === 0 && lidToPhone.size === 0) {
-    console.log('[JID Migration] No LID aliases found, skipping migration.');
+    log.jid.info('No LID aliases found, skipping migration');
     return;
   }
 
-  console.log(`[JID Migration] Discovered ${aliasCount} new aliases (${lidToPhone.size} total)`);
+  log.jid.info({ newAliases: aliasCount, total: lidToPhone.size }, 'Discovered JID aliases');
 
   // 2. Update messages: remote_jid and from_jid
   const updateRemoteJid = db.prepare(
@@ -172,7 +173,7 @@ export function migrateExistingJids(): void {
       .get(phoneJid);
     const lidContact = db
       .prepare('SELECT * FROM contacts WHERE jid = ?')
-      .get(lid) as any;
+      .get(lid) as { name: string | null; notify_name: string | null; short_name: string | null } | undefined;
 
     if (lidContact && phoneContact) {
       // Merge: fill any blanks in the phone contact from the LID contact, then delete LID
@@ -200,7 +201,5 @@ export function migrateExistingJids(): void {
     }
   }
 
-  console.log(
-    `[JID Migration] Updated ${msgUpdated} messages, merged chats and contacts.`
-  );
+  log.jid.info({ messagesUpdated: msgUpdated }, 'Migration complete — merged chats and contacts');
 }

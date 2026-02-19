@@ -12,13 +12,11 @@ import makeWASocket, {
   downloadMediaMessage,
 } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
-import pino from 'pino';
 import fs from 'fs';
 import { config } from '../config.js';
 import { eventBus } from '../events/bus.js';
 import { sanitizeVCardField } from '../utils/security.js';
-
-const logger = pino({ level: config.logLevel });
+import { logger, log } from '../utils/logger.js';
 
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'qr' | 'connected';
 
@@ -84,7 +82,7 @@ class ConnectionManager {
         this.status = 'qr';
         eventBus.publish('connection.qr', { qr });
         eventBus.publish('connection.status', { status: this.status });
-        console.log('[WA] QR code generated — scan with WhatsApp');
+        log.wa.info('QR code generated — scan with WhatsApp');
       }
 
       if (connection === 'close') {
@@ -98,15 +96,16 @@ class ConnectionManager {
         if (shouldReconnect && this.retryCount < this.maxRetries) {
           this.retryCount++;
           const delay = Math.min(1000 * Math.pow(2, this.retryCount), 60000);
-          console.log(
-            `[WA] Connection closed. Reconnecting in ${delay / 1000}s (attempt ${this.retryCount}/${this.maxRetries})...`
+          log.wa.info(
+            { delay: delay / 1000, attempt: this.retryCount, maxRetries: this.maxRetries },
+            'Connection closed, reconnecting'
           );
           setTimeout(() => this.connect(), delay);
         } else if (!shouldReconnect) {
-          console.log('[WA] Logged out. Delete auth folder and restart to re-authenticate.');
+          log.wa.warn('Logged out. Delete auth folder and restart to re-authenticate.');
           eventBus.publish('connection.logged_out', {});
         } else {
-          console.log('[WA] Max reconnection attempts reached.');
+          log.wa.error('Max reconnection attempts reached');
           eventBus.publish('connection.failed', { retries: this.retryCount });
         }
       }
@@ -117,12 +116,18 @@ class ConnectionManager {
         this.qrCode = null;
         this.myJid = this.sock?.user?.id || null;
         eventBus.publish('connection.status', { status: this.status, jid: this.myJid });
-        console.log(`[WA] Connected as ${this.myJid}`);
+        log.wa.info({ jid: this.myJid }, 'Connected');
       }
     });
 
     // Forward ALL Baileys events to the event bus
     this.registerEventForwarding();
+  }
+
+  private forwardEvent<E extends keyof BaileysEventMap>(event: E): void {
+    this.sock!.ev.on(event, (data: BaileysEventMap[E]) => {
+      eventBus.publish(`wa.${event}`, data);
+    });
   }
 
   private registerEventForwarding(): void {
@@ -150,9 +155,7 @@ class ConnectionManager {
     ];
 
     for (const eventName of eventsToForward) {
-      this.sock.ev.on(eventName as any, (data: any) => {
-        eventBus.publish(`wa.${eventName}`, data);
-      });
+      this.forwardEvent(eventName);
     }
   }
 
@@ -160,8 +163,8 @@ class ConnectionManager {
     if (this.sock) {
       try {
         await this.sock.logout();
-      } catch {
-        // Logout may fail if session is already dead — just end the socket
+      } catch (err) {
+        log.wa.warn({ err }, 'Logout failed, forcing socket close');
         this.sock.end(undefined);
       }
       this.sock = null;
@@ -226,7 +229,7 @@ class ConnectionManager {
     return this.sock.sendMessage(jid, {
       image: buffer,
       caption,
-      mimetype: mimeType as any,
+      mimetype: mimeType,
     });
   }
 

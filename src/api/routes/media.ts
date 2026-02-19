@@ -3,6 +3,7 @@ import { mediaRepo } from '../../database/repositories/media.js';
 import { mediaManager } from '../../media/manager.js';
 import { sanitizeFilename } from '../../utils/security.js';
 import { config } from '../../config.js';
+import { log } from '../../utils/logger.js';
 import fs from 'fs';
 import path from 'path';
 
@@ -13,7 +14,8 @@ router.get('/stats', (_req: Request, res: Response) => {
   try {
     res.json(mediaRepo.getStats());
   } catch (err) {
-    console.error('[API]', err); res.status(500).json({ error: 'Internal server error' });
+    log.api.error({ err }, 'media stats failed');
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -27,7 +29,8 @@ router.get('/:id', (req: Request, res: Response) => {
     }
     res.json(media);
   } catch (err) {
-    console.error('[API]', err); res.status(500).json({ error: 'Internal server error' });
+    log.api.error({ err }, 'media detail failed');
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -64,7 +67,8 @@ router.get('/:id/download', (req: Request, res: Response) => {
     }
     res.sendFile(path.resolve(fullPath));
   } catch (err) {
-    console.error('[API]', err); res.status(500).json({ error: 'Internal server error' });
+    log.api.error({ err }, 'media download failed');
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -78,7 +82,8 @@ router.get('/by-message/:messageId', (req: Request, res: Response) => {
     }
     res.json(media);
   } catch (err) {
-    console.error('[API]', err); res.status(500).json({ error: 'Internal server error' });
+    log.api.error({ err }, 'media by-message failed');
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 

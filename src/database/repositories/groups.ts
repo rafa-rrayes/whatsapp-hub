@@ -90,6 +90,6 @@ export const groupsRepo = {
   },
 
   getCount(): number {
-    return (getDb().prepare('SELECT COUNT(*) as c FROM groups').get() as any).c;
+    return (getDb().prepare('SELECT COUNT(*) as c FROM groups').get() as { c: number }).c;
   },
 };

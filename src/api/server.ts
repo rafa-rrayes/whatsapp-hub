@@ -5,6 +5,8 @@ import rateLimit from 'express-rate-limit';
 import { config } from '../config.js';
 import { authMiddleware } from './middleware/auth.js';
 import { setupWebSocket } from '../websocket/server.js';
+import { ApiError } from './errors.js';
+import { log } from '../utils/logger.js';
 
 import messagesRouter from './routes/messages.js';
 import contactsRouter from './routes/contacts.js';
@@ -214,7 +216,11 @@ export function createServer() {
 
   // Global error handler — prevents stack traces from leaking to clients
   app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-    console.error('[API] Unhandled error:', err);
+    if (err instanceof ApiError) {
+      res.status(err.statusCode).json({ error: err.message });
+      return;
+    }
+    log.api.error({ err }, 'Unhandled error');
     if (!res.headersSent) {
       res.status(500).json({ error: 'Internal server error' });
     }

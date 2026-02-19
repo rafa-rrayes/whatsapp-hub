@@ -18,6 +18,15 @@ export interface MediaRow {
   created_at: string;
 }
 
+export interface MediaStats {
+  total: number;
+  downloaded: number;
+  pending: number;
+  failed: number;
+  totalSize: number;
+  byType: Array<{ mime_type: string; count: number }>;
+}
+
 export const mediaRepo = {
   upsert(media: Partial<MediaRow>): void {
     const db = getDb();
@@ -68,15 +77,15 @@ export const mediaRepo = {
       .run(status, error || null, id);
   },
 
-  getStats(): any {
+  getStats(): MediaStats {
     const db = getDb();
     return {
-      total: (db.prepare('SELECT COUNT(*) as c FROM media').get() as any).c,
-      downloaded: (db.prepare("SELECT COUNT(*) as c FROM media WHERE download_status = 'downloaded'").get() as any).c,
-      pending: (db.prepare("SELECT COUNT(*) as c FROM media WHERE download_status = 'pending'").get() as any).c,
-      failed: (db.prepare("SELECT COUNT(*) as c FROM media WHERE download_status = 'failed'").get() as any).c,
-      totalSize: (db.prepare('SELECT COALESCE(SUM(file_size), 0) as s FROM media').get() as any).s,
-      byType: db.prepare('SELECT mime_type, COUNT(*) as count FROM media GROUP BY mime_type ORDER BY count DESC').all(),
+      total: (db.prepare('SELECT COUNT(*) as c FROM media').get() as { c: number }).c,
+      downloaded: (db.prepare("SELECT COUNT(*) as c FROM media WHERE download_status = 'downloaded'").get() as { c: number }).c,
+      pending: (db.prepare("SELECT COUNT(*) as c FROM media WHERE download_status = 'pending'").get() as { c: number }).c,
+      failed: (db.prepare("SELECT COUNT(*) as c FROM media WHERE download_status = 'failed'").get() as { c: number }).c,
+      totalSize: (db.prepare('SELECT COALESCE(SUM(file_size), 0) as s FROM media').get() as { s: number }).s,
+      byType: db.prepare('SELECT mime_type, COUNT(*) as count FROM media GROUP BY mime_type ORDER BY count DESC').all() as Array<{ mime_type: string; count: number }>,
     };
   },
 };

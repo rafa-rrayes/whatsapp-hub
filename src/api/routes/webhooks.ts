@@ -1,7 +1,10 @@
 import { Router, Request, Response } from 'express';
 import { getDb } from '../../database/index.js';
-import { v4 as uuid } from 'uuid';
 import { validateUrlForFetch } from '../../utils/security.js';
+import { validate } from '../middleware/validate.js';
+import { webhookCreateSchema } from '../schemas.js';
+import { log } from '../../utils/logger.js';
+import { v4 as uuid } from 'uuid';
 
 const router = Router();
 
@@ -14,32 +17,15 @@ router.get('/', (_req: Request, res: Response) => {
     ).all();
     res.json({ data: webhooks });
   } catch (err) {
-    console.error('[API]', err); res.status(500).json({ error: 'Internal server error' });
+    log.api.error({ err }, 'webhooks list failed');
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
 // POST /api/webhooks — create subscription
-router.post('/', async (req: Request, res: Response) => {
+router.post('/', validate(webhookCreateSchema), async (req: Request, res: Response) => {
   try {
     const { url, secret, events } = req.body;
-    if (!url) {
-      res.status(400).json({ error: 'Missing url' });
-      return;
-    }
-
-    // Field length validation
-    if (typeof url !== 'string' || url.length > 2048) {
-      res.status(400).json({ error: 'url must be a string under 2048 characters' });
-      return;
-    }
-    if (secret && (typeof secret !== 'string' || secret.length > 256)) {
-      res.status(400).json({ error: 'secret must be a string under 256 characters' });
-      return;
-    }
-    if (events && (typeof events !== 'string' || events.length > 1024)) {
-      res.status(400).json({ error: 'events must be a string under 1024 characters' });
-      return;
-    }
 
     // SSRF protection
     try {
@@ -56,7 +42,8 @@ router.post('/', async (req: Request, res: Response) => {
     `).run(id, url, secret || null, events || '*');
     res.json({ success: true, id });
   } catch (err) {
-    console.error('[API]', err); res.status(500).json({ error: 'Internal server error' });
+    log.api.error({ err }, 'webhook create failed');
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -67,7 +54,8 @@ router.delete('/:id', (req: Request, res: Response) => {
     const result = db.prepare('DELETE FROM webhook_subscriptions WHERE id = ?').run(req.params.id as string);
     res.json({ success: true, deleted: result.changes > 0 });
   } catch (err) {
-    console.error('[API]', err); res.status(500).json({ error: 'Internal server error' });
+    log.api.error({ err }, 'webhook delete failed');
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -80,7 +68,8 @@ router.put('/:id/toggle', (req: Request, res: Response) => {
     `).run(req.params.id as string);
     res.json({ success: true });
   } catch (err) {
-    console.error('[API]', err); res.status(500).json({ error: 'Internal server error' });
+    log.api.error({ err }, 'webhook toggle failed');
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 

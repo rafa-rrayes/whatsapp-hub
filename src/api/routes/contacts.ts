@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { contactsRepo } from '../../database/repositories/contacts.js';
 import { connectionManager } from '../../connection/manager.js';
 import { isValidJid } from '../../utils/security.js';
+import { log } from '../../utils/logger.js';
 
 const router = Router();
 
@@ -11,7 +12,8 @@ router.get('/', (req: Request, res: Response) => {
     const contacts = contactsRepo.getAll(req.query.search as string);
     res.json({ data: contacts, total: contacts.length });
   } catch (err) {
-    console.error('[API]', err); res.status(500).json({ error: 'Internal server error' });
+    log.api.error({ err }, 'contacts list failed');
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -29,7 +31,8 @@ router.get('/:jid', (req: Request, res: Response) => {
     }
     res.json(contact);
   } catch (err) {
-    console.error('[API]', err); res.status(500).json({ error: 'Internal server error' });
+    log.api.error({ err }, 'contact detail failed');
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -43,7 +46,8 @@ router.get('/:jid/profile-pic', async (req: Request, res: Response) => {
     const url = await connectionManager.getProfilePicUrl(req.params.jid as string);
     res.json({ url: url || null });
   } catch (err) {
-    console.error('[API]', err); res.status(500).json({ error: 'Internal server error' });
+    log.api.error({ err }, 'profile-pic failed');
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 

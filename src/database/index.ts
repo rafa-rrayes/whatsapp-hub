@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import { config } from '../config.js';
 import { applySchema } from './schema.js';
+import { log } from '../utils/logger.js';
 import fs from 'fs';
 import path from 'path';
 
@@ -31,13 +32,13 @@ export function initDb(): Database.Database {
 
   applySchema(db);
 
-  console.log(`[DB] SQLite initialized at ${config.dbPath}`);
+  log.db.info({ path: config.dbPath }, 'SQLite initialized');
   return db;
 }
 
 export function closeDb(): void {
   if (db) {
     db.close();
-    console.log('[DB] Database closed.');
+    log.db.info('Database closed');
   }
 }

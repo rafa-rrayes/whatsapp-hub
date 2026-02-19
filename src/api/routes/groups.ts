@@ -3,6 +3,7 @@ import { groupsRepo } from '../../database/repositories/groups.js';
 import { chatsRepo } from '../../database/repositories/chats.js';
 import { connectionManager } from '../../connection/manager.js';
 import { isValidJid } from '../../utils/security.js';
+import { log } from '../../utils/logger.js';
 
 const router = Router();
 
@@ -12,7 +13,8 @@ router.get('/', (req: Request, res: Response) => {
     const groups = groupsRepo.getAll(req.query.search as string);
     res.json({ data: groups, total: groups.length });
   } catch (err) {
-    console.error('[API]', err); res.status(500).json({ error: 'Internal server error' });
+    log.api.error({ err }, 'groups list failed');
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -31,7 +33,8 @@ router.get('/:jid', (req: Request, res: Response) => {
     const participants = groupsRepo.getParticipants(req.params.jid as string);
     res.json({ ...group, participants });
   } catch (err) {
-    console.error('[API]', err); res.status(500).json({ error: 'Internal server error' });
+    log.api.error({ err }, 'group detail failed');
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -45,7 +48,8 @@ router.get('/:jid/metadata', async (req: Request, res: Response) => {
     const metadata = await connectionManager.getGroupMetadata(req.params.jid as string);
     res.json(metadata);
   } catch (err) {
-    console.error('[API]', err); res.status(500).json({ error: 'Internal server error' });
+    log.api.error({ err }, 'group metadata failed');
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -59,7 +63,8 @@ router.get('/:jid/invite-code', async (req: Request, res: Response) => {
     const code = await connectionManager.getGroupInviteCode(req.params.jid as string);
     res.json({ code });
   } catch (err) {
-    console.error('[API]', err); res.status(500).json({ error: 'Internal server error' });
+    log.api.error({ err }, 'invite-code failed');
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -73,7 +78,8 @@ router.put('/:jid/subject', async (req: Request, res: Response) => {
     await connectionManager.groupUpdateSubject(req.params.jid as string, req.body.subject);
     res.json({ success: true });
   } catch (err) {
-    console.error('[API]', err); res.status(500).json({ error: 'Internal server error' });
+    log.api.error({ err }, 'group subject update failed');
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -87,7 +93,8 @@ router.put('/:jid/description', async (req: Request, res: Response) => {
     await connectionManager.groupUpdateDescription(req.params.jid as string, req.body.description);
     res.json({ success: true });
   } catch (err) {
-    console.error('[API]', err); res.status(500).json({ error: 'Internal server error' });
+    log.api.error({ err }, 'group description update failed');
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -117,7 +124,7 @@ router.post('/sync', async (_req: Request, res: Response) => {
           if (metadata.participants) {
             groupsRepo.setParticipants(
               metadata.id,
-              metadata.participants.map((p: any) => ({
+              metadata.participants.map((p) => ({
                 jid: p.id,
                 role: p.admin || 'member',
               }))
@@ -132,7 +139,8 @@ router.post('/sync', async (_req: Request, res: Response) => {
 
     res.json({ success: true, synced, failed, total: groupChats.length });
   } catch (err) {
-    console.error('[API]', err); res.status(500).json({ error: 'Internal server error' });
+    log.api.error({ err }, 'group sync failed');
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -160,7 +168,8 @@ router.post('/:jid/participants', async (req: Request, res: Response) => {
     );
     res.json({ success: true, result });
   } catch (err) {
-    console.error('[API]', err); res.status(500).json({ error: 'Internal server error' });
+    log.api.error({ err }, 'group participants update failed');
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 

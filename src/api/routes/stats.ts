@@ -6,6 +6,7 @@ import { mediaRepo } from '../../database/repositories/media.js';
 import { eventsRepo } from '../../database/repositories/events.js';
 import { getDb } from '../../database/index.js';
 import { clampPagination } from '../../utils/security.js';
+import { log } from '../../utils/logger.js';
 
 const router = Router();
 
@@ -18,11 +19,12 @@ router.get('/', (_req: Request, res: Response) => {
       contacts: contactsRepo.getCount(),
       groups: groupsRepo.getCount(),
       media: mediaRepo.getStats(),
-      calls: (db.prepare('SELECT COUNT(*) as c FROM call_log').get() as any).c,
-      chats: (db.prepare('SELECT COUNT(*) as c FROM chats').get() as any).c,
+      calls: (db.prepare('SELECT COUNT(*) as c FROM call_log').get() as { c: number }).c,
+      chats: (db.prepare('SELECT COUNT(*) as c FROM chats').get() as { c: number }).c,
     });
   } catch (err) {
-    console.error('[API]', err); res.status(500).json({ error: 'Internal server error' });
+    log.api.error({ err }, 'stats failed');
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -37,7 +39,8 @@ router.get('/events', (req: Request, res: Response) => {
     });
     res.json({ data: events });
   } catch (err) {
-    console.error('[API]', err); res.status(500).json({ error: 'Internal server error' });
+    log.api.error({ err }, 'events query failed');
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -46,7 +49,8 @@ router.get('/events/types', (_req: Request, res: Response) => {
   try {
     res.json({ data: eventsRepo.getEventTypes() });
   } catch (err) {
-    console.error('[API]', err); res.status(500).json({ error: 'Internal server error' });
+    log.api.error({ err }, 'event types failed');
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -57,7 +61,8 @@ router.delete('/events/prune', (req: Request, res: Response) => {
     const deleted = eventsRepo.prune(days);
     res.json({ success: true, deleted });
   } catch (err) {
-    console.error('[API]', err); res.status(500).json({ error: 'Internal server error' });
+    log.api.error({ err }, 'events prune failed');
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 

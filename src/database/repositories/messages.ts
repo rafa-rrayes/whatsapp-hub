@@ -42,6 +42,14 @@ export interface MessageRow {
   created_at: string;
 }
 
+export interface MessageStats {
+  total: number;
+  byType: Array<{ message_type: string; count: number }>;
+  byChat: Array<{ remote_jid: string; count: number }>;
+  byDay: Array<{ day: string; count: number }>;
+  mediaCount: number;
+}
+
 export interface MessageQuery {
   remote_jid?: string;
   from_jid?: string;
@@ -200,29 +208,29 @@ export const messagesRepo = {
     ).run(newBody, id);
   },
 
-  getStats(): any {
+  getStats(): MessageStats {
     const db = getDb();
     return {
-      total: (db.prepare('SELECT COUNT(*) as c FROM messages').get() as any).c,
+      total: (db.prepare('SELECT COUNT(*) as c FROM messages').get() as { c: number }).c,
       byType: db
         .prepare(
           'SELECT message_type, COUNT(*) as count FROM messages GROUP BY message_type ORDER BY count DESC'
         )
-        .all(),
+        .all() as Array<{ message_type: string; count: number }>,
       byChat: db
         .prepare(
           `SELECT remote_jid, COUNT(*) as count FROM messages
            GROUP BY remote_jid ORDER BY count DESC LIMIT 20`
         )
-        .all(),
+        .all() as Array<{ remote_jid: string; count: number }>,
       byDay: db
         .prepare(
           `SELECT date(timestamp, 'unixepoch') as day, COUNT(*) as count
            FROM messages GROUP BY day ORDER BY day DESC LIMIT 30`
         )
-        .all(),
+        .all() as Array<{ day: string; count: number }>,
       mediaCount: (
-        db.prepare('SELECT COUNT(*) as c FROM messages WHERE has_media = 1').get() as any
+        db.prepare('SELECT COUNT(*) as c FROM messages WHERE has_media = 1').get() as { c: number }
       ).c,
     };
   },

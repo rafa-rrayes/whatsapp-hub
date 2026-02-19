@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { connectionManager } from '../../connection/manager.js';
+import { log } from '../../utils/logger.js';
 import QRCode from 'qrcode';
 
 const router = Router();
@@ -27,7 +28,8 @@ router.get('/qr', async (_req: Request, res: Response) => {
     const dataUrl = await QRCode.toDataURL(qr);
     res.json({ qr: dataUrl, raw: qr });
   } catch (err) {
-    console.error('[API]', err); res.status(500).json({ error: 'Internal server error' });
+    log.api.error({ err }, 'qr failed');
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -43,7 +45,8 @@ router.get('/qr/image', async (_req: Request, res: Response) => {
     res.setHeader('Content-Type', 'image/png');
     res.send(buffer);
   } catch (err) {
-    console.error('[API]', err); res.status(500).json({ error: 'Internal server error' });
+    log.api.error({ err }, 'qr/image failed');
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -53,7 +56,8 @@ router.post('/restart', async (_req: Request, res: Response) => {
     await connectionManager.restart();
     res.json({ success: true, message: 'Reconnecting...' });
   } catch (err) {
-    console.error('[API]', err); res.status(500).json({ error: 'Internal server error' });
+    log.api.error({ err }, 'restart failed');
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -63,7 +67,8 @@ router.post('/new-qr', async (_req: Request, res: Response) => {
     await connectionManager.newQR();
     res.json({ success: true, message: 'Auth cleared. Generating new QR code...' });
   } catch (err) {
-    console.error('[API]', err); res.status(500).json({ error: 'Internal server error' });
+    log.api.error({ err }, 'new-qr failed');
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -73,7 +78,8 @@ router.post('/logout', async (_req: Request, res: Response) => {
     await connectionManager.disconnect();
     res.json({ success: true, message: 'Logged out' });
   } catch (err) {
-    console.error('[API]', err); res.status(500).json({ error: 'Internal server error' });
+    log.api.error({ err }, 'logout failed');
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
