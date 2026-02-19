@@ -213,6 +213,20 @@ function GroupManageDialog({ jid, contactMap }: { jid: string; contactMap: Map<s
   )
 }
 
+function GroupManageDialogWrapper({ jid, contactMap }: { jid: string; contactMap: Map<string, string> }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button variant="ghost" size="icon-xs">
+          <Settings className="h-3.5 w-3.5" />
+        </Button>
+      </DialogTrigger>
+      {open && <GroupManageDialog jid={jid} contactMap={contactMap} />}
+    </Dialog>
+  )
+}
+
 export function GroupsPage() {
   const [search, setSearch] = useState("")
   const contactMap = useContactMap()
@@ -314,14 +328,7 @@ export function GroupsPage() {
                       {formatDatetime(group.first_seen_at)}
                     </TableCell>
                     <TableCell>
-                      <Dialog>
-                        <DialogTrigger asChild>
-                          <Button variant="ghost" size="icon-xs">
-                            <Settings className="h-3.5 w-3.5" />
-                          </Button>
-                        </DialogTrigger>
-                        <GroupManageDialog jid={group.jid} contactMap={contactMap} />
-                      </Dialog>
+                      <GroupManageDialogWrapper jid={group.jid} contactMap={contactMap} />
                     </TableCell>
                   </TableRow>
                 ))}
