@@ -61,7 +61,10 @@ export function createServer() {
   }
 
   // Security headers
-  const cspDirectives: Record<string, string[]> = {
+  // upgrade-insecure-requests is in Helmet's default CSP directives.
+  // It tells browsers to load all sub-resources over HTTPS, which breaks plain HTTP.
+  // Use null to explicitly remove the directive; [] to keep it.
+  const cspDirectives: Record<string, string[] | null> = {
     defaultSrc: ["'self'"],
     scriptSrc: ["'self'"],
     styleSrc: ["'self'", "'unsafe-inline'"],
@@ -71,12 +74,8 @@ export function createServer() {
     frameSrc: ["'none'"],
     objectSrc: ["'none'"],
     baseUri: ["'self'"],
+    upgradeInsecureRequests: config.behindProxy ? [] : null,
   };
-  // upgrade-insecure-requests tells browsers to load all sub-resources over HTTPS.
-  // Only enable when a TLS-terminating reverse proxy sits in front of the app.
-  if (config.behindProxy) {
-    cspDirectives.upgradeInsecureRequests = [];
-  }
 
   app.use(helmet({
     contentSecurityPolicy: { directives: cspDirectives },
