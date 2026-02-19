@@ -18,6 +18,8 @@ import chatsRouter from './routes/chats.js';
 import webhooksRouter from './routes/webhooks.js';
 import statsRouter from './routes/stats.js';
 import settingsRouter from './routes/settings.js';
+import wsTicketRouter from './routes/ws-ticket.js';
+import { secFetchMiddleware } from './middleware/sec-fetch.js';
 
 /**
  * Returns true if `origin` is a loopback or RFC-1918 private address on the given port.
@@ -130,13 +132,14 @@ export function createServer() {
     next();
   });
 
-  // Global rate limiter
+  // Global rate limiter (keyed per API key for fair sharing)
   app.use(rateLimit({
     windowMs: 60 * 1000,  // 1 minute
     max: 200,             // 200 requests per minute
     standardHeaders: true,
     legacyHeaders: false,
     message: { error: 'Too many requests, please try again later.' },
+    keyGenerator: (req) => (req.headers['x-api-key'] as string) || req.ip || 'unknown',
   }));
 
   // Serve static dashboard (no auth — dashboard handles its own API key)
@@ -146,6 +149,11 @@ export function createServer() {
   app.get('/health', (_req, res) => {
     res.json({ status: 'ok' });
   });
+
+  // Sec-Fetch-* header validation (before auth, blocks cross-site browser requests)
+  if (config.security.secFetchCheck) {
+    app.use('/api', secFetchMiddleware);
+  }
 
   // Auth middleware for all /api routes
   app.use('/api', authMiddleware);
@@ -168,6 +176,9 @@ export function createServer() {
   app.use('/api/actions/send/audio', mediaBodyParser);
   app.use('/api/actions/send/video', mediaBodyParser);
   app.use('/api/actions/send/sticker', mediaBodyParser);
+
+  // WebSocket ticket route (must be registered before generic routes)
+  app.use('/api/ws', wsTicketRouter);
 
   // Register routes
   app.use('/api/messages', messagesRouter);
@@ -255,7 +266,8 @@ export function createServer() {
           'PUT /api/settings': 'Update runtime settings { logLevel?, autoDownloadMedia?, maxMediaSizeMB? }',
         },
         websocket: {
-          'WS /ws?token=&events=': 'Real-time event stream (events param is optional comma-separated filter)',
+          'POST /api/ws/ticket': 'Get a one-time WebSocket ticket (requires SECURITY_WS_TICKET_AUTH=true)',
+          'WS /ws?ticket=&events=': 'Real-time event stream (events param is optional comma-separated filter)',
         },
       },
     });

@@ -1,4 +1,12 @@
 import { getDb } from '../index.js';
+import { config } from '../../config.js';
+
+function stripRawMessage<T extends { raw_message?: string }>(row: T): T {
+  if (config.security.stripRawMessages && row) {
+    delete row.raw_message;
+  }
+  return row;
+}
 
 export interface MessageRow {
   id: string;
@@ -135,6 +143,13 @@ export const messagesRepo = {
 
   getById(id: string): MessageRow | undefined {
     const db = getDb();
+    const row = db.prepare('SELECT * FROM messages WHERE id = ?').get(id) as MessageRow | undefined;
+    return row ? stripRawMessage(row) : undefined;
+  },
+
+  /** Internal getById that always includes raw_message (for quoting use case). */
+  getByIdInternal(id: string): MessageRow | undefined {
+    const db = getDb();
     return db.prepare('SELECT * FROM messages WHERE id = ?').get(id) as MessageRow | undefined;
   },
 
@@ -191,7 +206,7 @@ export const messagesRepo = {
       )
       .all({ ...params, limit, offset }) as MessageRow[];
 
-    return { data, total: total.count };
+    return { data: data.map(stripRawMessage), total: total.count };
   },
 
   markDeleted(id: string): void {

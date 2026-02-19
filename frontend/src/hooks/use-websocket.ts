@@ -6,6 +6,23 @@ import type { HubEvent } from "@/lib/types"
 
 const MAX_RETRIES = 10
 
+async function fetchTicket(apiKey: string): Promise<string | null> {
+  try {
+    const res = await fetch("/api/ws/ticket", {
+      method: "POST",
+      headers: { "x-api-key": apiKey },
+    })
+    if (res.ok) {
+      const data = await res.json()
+      return data.ticket as string
+    }
+    // 404 means feature not enabled on server
+    return null
+  } catch {
+    return null
+  }
+}
+
 export function useWebSocket() {
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined)
@@ -20,7 +37,7 @@ export function useWebSocket() {
   useEffect(() => {
     if (!isAuthenticated || !apiKey) return
 
-    function connect() {
+    async function connect() {
       if (retryCountRef.current >= MAX_RETRIES) {
         setStatus("error")
         return
@@ -28,7 +45,18 @@ export function useWebSocket() {
 
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:"
       const host = window.location.host
-      const ws = new WebSocket(`${protocol}//${host}/ws?api_key=${encodeURIComponent(apiKey)}`)
+
+      // Try ticket-based auth first, fall back to query param
+      const ticket = await fetchTicket(apiKey)
+      let wsUrl: string
+      if (ticket) {
+        wsUrl = `${protocol}//${host}/ws?ticket=${encodeURIComponent(ticket)}`
+      } else {
+        console.warn("[security] WebSocket ticket auth not available, falling back to query parameter. Enable SECURITY_WS_TICKET_AUTH=true on the server.")
+        wsUrl = `${protocol}//${host}/ws?api_key=${encodeURIComponent(apiKey)}`
+      }
+
+      const ws = new WebSocket(wsUrl)
       wsRef.current = ws
 
       setStatus("connecting")

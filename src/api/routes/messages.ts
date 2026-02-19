@@ -19,7 +19,7 @@ router.get('/', asyncHandler(async (req, res) => {
     has_media: q.has_media !== undefined ? q.has_media === 'true' : undefined,
     limit: clampPagination(q.limit, 50, 500),
     offset: clampPagination(q.offset, 0, 100000),
-    order: (q.order as 'asc' | 'desc') || 'desc',
+    order: q.order === 'asc' ? 'asc' : 'desc',
   });
   res.json(result);
 }));

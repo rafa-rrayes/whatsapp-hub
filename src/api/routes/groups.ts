@@ -3,6 +3,8 @@ import { groupsRepo } from '../../database/repositories/groups.js';
 import { chatsRepo } from '../../database/repositories/chats.js';
 import { connectionManager } from '../../connection/manager.js';
 import { isValidJid } from '../../utils/security.js';
+import { validate } from '../middleware/validate.js';
+import { groupSubjectSchema, groupDescriptionSchema, groupParticipantsSchema } from '../schemas.js';
 import { asyncHandler, NotFoundError, BadRequestError } from '../errors.js';
 
 const router = Router();
@@ -45,7 +47,7 @@ router.get('/:jid/invite-code', asyncHandler(async (req, res) => {
 }));
 
 // PUT /api/groups/:jid/subject
-router.put('/:jid/subject', asyncHandler(async (req, res) => {
+router.put('/:jid/subject', validate(groupSubjectSchema), asyncHandler(async (req, res) => {
   if (!isValidJid(req.params.jid)) {
     throw new BadRequestError('Invalid JID format');
   }
@@ -54,7 +56,7 @@ router.put('/:jid/subject', asyncHandler(async (req, res) => {
 }));
 
 // PUT /api/groups/:jid/description
-router.put('/:jid/description', asyncHandler(async (req, res) => {
+router.put('/:jid/description', validate(groupDescriptionSchema), asyncHandler(async (req, res) => {
   if (!isValidJid(req.params.jid)) {
     throw new BadRequestError('Invalid JID format');
   }
@@ -104,18 +106,11 @@ router.post('/sync', asyncHandler(async (_req, res) => {
 }));
 
 // POST /api/groups/:jid/participants — add/remove/promote/demote
-router.post('/:jid/participants', asyncHandler(async (req, res) => {
+router.post('/:jid/participants', validate(groupParticipantsSchema), asyncHandler(async (req, res) => {
   if (!isValidJid(req.params.jid)) {
     throw new BadRequestError('Invalid JID format');
   }
   const { participants, action } = req.body;
-  if (!participants || !action) {
-    throw new BadRequestError('Missing participants or action');
-  }
-  const ALLOWED_ACTIONS = ['add', 'remove', 'promote', 'demote'];
-  if (!ALLOWED_ACTIONS.includes(action)) {
-    throw new BadRequestError(`Invalid action. Must be one of: ${ALLOWED_ACTIONS.join(', ')}`);
-  }
   const result = await connectionManager.groupParticipantsUpdate(
     req.params.jid as string,
     participants,

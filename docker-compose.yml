@@ -3,6 +3,8 @@ services:
     build: .
     container_name: whatsapp-hub
     restart: unless-stopped
+    # init: true ensures PID 1 properly reaps zombie processes
+    init: true
     ports:
       - "3100:3100"
     volumes:
@@ -19,6 +21,18 @@ services:
       - SESSION_NAME=default
       - WEBHOOK_URLS=${WEBHOOK_URLS:-}
       - WEBHOOK_SECRET=${WEBHOOK_SECRET:-}
+      # Security settings (see .env.example for descriptions)
+      - SECURITY_WS_TICKET_AUTH=${SECURITY_WS_TICKET_AUTH:-false}
+      - SECURITY_DISABLE_HTTP_QUERY_AUTH=${SECURITY_DISABLE_HTTP_QUERY_AUTH:-false}
+      - SECURITY_STRIP_RAW_MESSAGES=${SECURITY_STRIP_RAW_MESSAGES:-false}
+      - SECURITY_ENCRYPT_WEBHOOK_SECRETS=${SECURITY_ENCRYPT_WEBHOOK_SECRETS:-false}
+      - SECURITY_ENCRYPT_DATABASE=${SECURITY_ENCRYPT_DATABASE:-false}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-}
+      - SECURITY_AUTO_PRUNE=${SECURITY_AUTO_PRUNE:-false}
+      - PRESENCE_RETENTION_DAYS=${PRESENCE_RETENTION_DAYS:-7}
+      - EVENT_RETENTION_DAYS=${EVENT_RETENTION_DAYS:-30}
+      - SECURITY_HASH_EVENT_JIDS=${SECURITY_HASH_EVENT_JIDS:-false}
+      - SECURITY_SEC_FETCH_CHECK=${SECURITY_SEC_FETCH_CHECK:-false}
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:3100/health"]
       interval: 30s

@@ -7,7 +7,33 @@ import { timingSafeEqual } from '../utils/security.js';
 import { log } from '../utils/logger.js';
 
 const MAX_CONNECTIONS = 20;
+const PING_INTERVAL_MS = 30_000;
 const activeConnections = new Set<WebSocket>();
+
+// Ticket store for secure WebSocket auth (populated by ws-ticket route)
+const ticketStore = new Map<string, number>(); // ticket → expiresAt
+let ticketCleanupTimer: ReturnType<typeof setInterval> | undefined;
+
+export function consumeTicket(ticket: string): boolean {
+  const expiresAt = ticketStore.get(ticket);
+  if (!expiresAt) return false;
+  ticketStore.delete(ticket);
+  return Date.now() < expiresAt;
+}
+
+export function storeTicket(ticket: string, ttlMs: number): void {
+  ticketStore.set(ticket, Date.now() + ttlMs);
+  // Start cleanup timer if not running
+  if (!ticketCleanupTimer) {
+    ticketCleanupTimer = setInterval(() => {
+      const now = Date.now();
+      for (const [t, exp] of ticketStore) {
+        if (now >= exp) ticketStore.delete(t);
+      }
+    }, 60_000);
+    ticketCleanupTimer.unref();
+  }
+}
 
 export function setupWebSocket(app: Application): void {
   const wsInstance = expressWs(app);
@@ -19,17 +45,47 @@ export function setupWebSocket(app: Application): void {
       return;
     }
 
-    // Authenticate with timing-safe comparison
-    const apiKey =
-      req.query.api_key as string ||
-      req.headers['x-api-key'] as string;
+    // Authenticate
+    let authenticated = false;
 
-    if (!apiKey || !timingSafeEqual(apiKey, config.apiKey)) {
+    if (config.security.wsTicketAuth) {
+      // Ticket mode: accept ?ticket= (one-time) or x-api-key header (non-browser clients)
+      const ticket = req.query.ticket as string;
+      const headerKey = req.headers['x-api-key'] as string;
+
+      if (ticket) {
+        authenticated = consumeTicket(ticket);
+      } else if (headerKey) {
+        authenticated = timingSafeEqual(headerKey, config.apiKey);
+      }
+      // Reject ?api_key= in ticket mode
+    } else {
+      // Legacy mode: accept api_key query param and header
+      const apiKey =
+        req.query.api_key as string ||
+        req.headers['x-api-key'] as string;
+      authenticated = !!apiKey && timingSafeEqual(apiKey, config.apiKey);
+    }
+
+    if (!authenticated) {
       ws.close(4001, 'Unauthorized');
       return;
     }
 
     activeConnections.add(ws);
+
+    // Ping/pong heartbeat to detect stale connections
+    let isAlive = true;
+    const pingTimer = setInterval(() => {
+      if (!isAlive) {
+        ws.terminate();
+        return;
+      }
+      isAlive = false;
+      ws.ping();
+    }, PING_INTERVAL_MS);
+
+    ws.on('pong', () => { isAlive = true; });
 
     // Optional event filter
     const filterEvents = req.query.events
@@ -61,15 +117,19 @@ export function setupWebSocket(app: Application): void {
     // Discard unsolicited messages to prevent memory buildup
     ws.on('message', () => { /* discard */ });
 
-    ws.on('close', () => {
+    const cleanup = () => {
+      clearInterval(pingTimer);
       activeConnections.delete(ws);
       eventBus.removeListener('*', handler);
+    };
+
+    ws.on('close', () => {
+      cleanup();
       log.ws.info({ active: activeConnections.size }, 'Client disconnected');
     });
 
     ws.on('error', () => {
-      activeConnections.delete(ws);
-      eventBus.removeListener('*', handler);
+      cleanup();
     });
 
     // Send current connection status on connect

@@ -25,8 +25,41 @@ async function resolveBuffer(base64?: string, url?: string): Promise<Buffer> {
     return Buffer.from(base64, 'base64');
   }
   await validateUrlForFetch(url!);
-  const response = await fetch(url!);
-  return Buffer.from(await response.arrayBuffer());
+
+  const { config } = await import('../../config.js');
+  const maxBytes = config.maxMediaSizeMB * 1024 * 1024;
+
+  const response = await fetch(url!, {
+    signal: AbortSignal.timeout(30_000),
+  });
+
+  // Early rejection via Content-Length header
+  const contentLength = Number(response.headers.get('content-length'));
+  if (contentLength && contentLength > maxBytes) {
+    throw new Error(`File too large: ${Math.round(contentLength / 1024 / 1024)}MB exceeds ${config.maxMediaSizeMB}MB limit`);
+  }
+
+  // Stream with chunk-by-chunk size guard
+  const reader = response.body?.getReader();
+  if (!reader) {
+    throw new Error('No response body');
+  }
+
+  const chunks: Uint8Array[] = [];
+  let totalSize = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    totalSize += value.byteLength;
+    if (totalSize > maxBytes) {
+      reader.cancel();
+      throw new Error(`File too large: exceeds ${config.maxMediaSizeMB}MB limit`);
+    }
+    chunks.push(value);
+  }
+
+  return Buffer.concat(chunks);
 }
 
 // POST /api/actions/send/text

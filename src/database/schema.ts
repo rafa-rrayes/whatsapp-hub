@@ -1,4 +1,4 @@
-import Database from 'better-sqlite3';
+import type Database from 'better-sqlite3';
 
 export function applySchema(db: Database.Database): void {
   db.exec(`

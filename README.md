@@ -23,10 +23,11 @@ WhatsApp  <-->  Baileys Connection  <-->  Event Bus  <-->  SQLite DB
 - **Call log** — incoming/outgoing, video/voice, duration
 - **Status/Stories** — captured and stored
 - **Message receipts** — sent/delivered/read/played timestamps per recipient
-- **Webhook system** — HMAC-signed payloads, event filtering, toggle on/off
-- **WebSocket streaming** — real-time events with optional event type filtering
+- **Webhook system** — HMAC-signed payloads, event filtering, toggle on/off, SSRF protection
+- **WebSocket streaming** — real-time events with optional event type filtering, ticket-based auth
 - **Full-text search** — search across all messages
 - **Web dashboard** — 10-page interactive UI for browsing everything
+- **Security hardening** — database encryption (SQLCipher), webhook secret encryption, configurable security toggles
 - **Docker-ready** — single `docker compose up` to deploy
 
 ## Quick Start
@@ -85,9 +86,9 @@ Interactive API docs are available in the dashboard at `GET /api`.
 
 All requests require an API key via one of:
 
-- Header: `x-api-key: YOUR_KEY`
+- Header: `x-api-key: YOUR_KEY` (recommended)
 - Header: `Authorization: Bearer YOUR_KEY`
-- Query param: `?api_key=YOUR_KEY`
+- Query param: `?api_key=YOUR_KEY` (disabled when `SECURITY_DISABLE_HTTP_QUERY_AUTH=true`)
 
 ### Endpoints
 
@@ -100,6 +101,7 @@ All requests require an API key via one of:
 | GET | `/api/connection/qr` | QR code as base64 data URL |
 | GET | `/api/connection/qr/image` | QR code as PNG |
 | POST | `/api/connection/restart` | Restart connection |
+| POST | `/api/connection/new-qr` | Clear session, generate new QR |
 | POST | `/api/connection/logout` | Logout |
 
 </details>
@@ -163,6 +165,7 @@ All requests require an API key via one of:
 | PUT | `/api/groups/:jid/subject` | Update subject |
 | PUT | `/api/groups/:jid/description` | Update description |
 | POST | `/api/groups/:jid/participants` | Manage members |
+| POST | `/api/groups/sync` | Sync all groups from WhatsApp |
 
 </details>
 
@@ -215,9 +218,29 @@ Webhook payloads include `X-Hub-Event` and `X-Hub-Signature` (HMAC-SHA256) heade
 <details>
 <summary><strong>WebSocket</strong></summary>
 
-Connect to `ws://your-server:3100/ws?api_key=YOUR_KEY` for real-time events.
+Connect to `ws://your-server:3100/ws` for real-time events. Max 20 concurrent connections with automatic ping/pong cleanup.
 
-Optional filter: `ws://...?api_key=KEY&events=wa.messages,wa.presence`
+**Authentication** (one of):
+
+| Method | Usage |
+|--------|-------|
+| Ticket (recommended) | `POST /api/ws/ticket` → connect with `?ticket=TOKEN` |
+| Header | `x-api-key: YOUR_KEY` (non-browser clients) |
+| Query param (legacy) | `?api_key=YOUR_KEY` |
+
+Ticket auth requires `SECURITY_WS_TICKET_AUTH=true`. Tickets are one-time use and expire after 30 seconds.
+
+Optional event filter: `?ticket=TOKEN&events=wa.messages.upsert,wa.presence.update`
+
+</details>
+
+<details>
+<summary><strong>Settings</strong></summary>
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/settings` | List runtime settings with defaults |
+| PUT | `/api/settings` | Update settings `{ logLevel?, autoDownloadMedia?, maxMediaSizeMB? }` |
 
 </details>
 
@@ -278,7 +301,16 @@ requests.post(f"{API}/actions/send/text", headers=HEADERS, json={
 ```javascript
 import WebSocket from "ws";
 
-const ws = new WebSocket("ws://localhost:3100/ws?api_key=YOUR_KEY&events=wa.messages");
+// With ticket auth (recommended — requires SECURITY_WS_TICKET_AUTH=true)
+const res = await fetch("http://localhost:3100/api/ws/ticket", {
+  method: "POST",
+  headers: { "x-api-key": "YOUR_KEY" },
+});
+const { ticket } = await res.json();
+const ws = new WebSocket(`ws://localhost:3100/ws?ticket=${ticket}&events=wa.messages.upsert`);
+
+// Or with header auth (non-browser)
+// const ws = new WebSocket("ws://localhost:3100/ws", { headers: { "x-api-key": "YOUR_KEY" } });
 
 ws.on("message", (data) => {
   const event = JSON.parse(data);
@@ -287,6 +319,8 @@ ws.on("message", (data) => {
 ```
 
 ## Environment Variables
+
+### Core
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -299,8 +333,29 @@ ws.on("message", (data) => {
 | `LOG_LEVEL` | `info` | Pino log level |
 | `SESSION_NAME` | `default` | Baileys auth session name |
 | `BEHIND_PROXY` | `false` | Set `true` behind a TLS reverse proxy (enables HSTS, CSP upgrade-insecure-requests, trust proxy) |
+| `CORS_ORIGINS` | *(auto)* | Allowed CORS origins (comma-separated, or `*`). Default: localhost + LAN IPs on configured port |
 | `WEBHOOK_URLS` | — | Comma-separated webhook URLs |
 | `WEBHOOK_SECRET` | — | HMAC secret for webhook signatures |
+
+### Security
+
+All security features default to off for backward compatibility. The server prints recommendations at startup.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SECURITY_WS_TICKET_AUTH` | `false` | Use one-time tickets for WebSocket auth instead of api_key in URL |
+| `SECURITY_DISABLE_HTTP_QUERY_AUTH` | `false` | Disable `?api_key=` query parameter on HTTP endpoints |
+| `SECURITY_ENCRYPT_DATABASE` | `false` | Encrypt SQLite database at rest with SQLCipher (requires `ENCRYPTION_KEY`) |
+| `SECURITY_ENCRYPT_WEBHOOK_SECRETS` | `false` | Encrypt webhook HMAC secrets at rest (requires `ENCRYPTION_KEY`) |
+| `SECURITY_STRIP_RAW_MESSAGES` | `false` | Omit `raw_message` field from API responses |
+| `ENCRYPTION_KEY` | — | Master encryption key (min 16 chars). Required by database and webhook secret encryption |
+| `SECURITY_AUTO_PRUNE` | `false` | Auto-prune old presence and event log entries every 6 hours |
+| `PRESENCE_RETENTION_DAYS` | `7` | Days to keep presence log entries (when auto-prune enabled) |
+| `EVENT_RETENTION_DAYS` | `30` | Days to keep event log entries (when auto-prune enabled) |
+| `SECURITY_HASH_EVENT_JIDS` | `false` | Hash phone numbers in event log for privacy (one-way) |
+| `SECURITY_SEC_FETCH_CHECK` | `false` | Block cross-site browser requests via Sec-Fetch-Site header |
+
+**Always-on hardening** (no configuration needed): Bearer token parsing fix, WebSocket ping/pong heartbeat, input validation on group operations and order parameters, media URL fetch size limits + timeout, SSRF re-validation at webhook delivery, per-API-key rate limiting.
 
 ## Reverse Proxy / HTTPS
 
@@ -321,10 +376,22 @@ Leave it at `false` (the default) when accessing the app directly over HTTP, oth
 
 ```
 data/
-├── whatsapp-hub.db        # SQLite database (WAL mode)
+├── whatsapp-hub.db        # SQLite database (WAL mode, optionally encrypted with SQLCipher)
 ├── auth/default/          # Baileys session credentials
 └── media/
     └── 2025/01/15/        # Date-organized media files
+```
+
+When `SECURITY_ENCRYPT_DATABASE=true`, the database is encrypted at rest using SQLCipher (AES-256). Existing unencrypted databases are automatically migrated on first start (a backup is created beforehand).
+
+**Non-Docker:** install the optional package directly:
+```bash
+npm install @journeyapps/sqlcipher
+```
+
+**Docker:** use the encryption overlay (Debian-based image with SQLCipher pre-installed):
+```bash
+docker compose -f docker-compose.yml -f docker-compose.encrypted.yml up -d
 ```
 
 ## Development
@@ -346,7 +413,7 @@ npm run dev
 
 ## Tech Stack
 
-**Backend:** Node.js, TypeScript, Express, Baileys, better-sqlite3, Pino
+**Backend:** Node.js, TypeScript, Express, Baileys, SQLCipher/better-sqlite3, Pino
 
 **Frontend:** React, TypeScript, Vite, Tailwind CSS, Radix UI, Zustand, TanStack Query, Recharts
 

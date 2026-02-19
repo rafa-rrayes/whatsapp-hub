@@ -1,5 +1,6 @@
 import { eventBus, HubEvent } from '../events/bus.js';
 import { getDb } from '../database/index.js';
+import { validateUrlForFetch } from '../utils/security.js';
 import { log } from '../utils/logger.js';
 import crypto from 'crypto';
 
@@ -11,6 +12,10 @@ interface WebhookSub {
   is_active: number;
 }
 
+// URL validation cache: url → { validatedAt, valid }
+const URL_VALIDATION_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const urlValidationCache = new Map<string, { validatedAt: number; valid: boolean }>();
+
 class WebhookDispatcher {
   private readonly MAX_QUEUE_SIZE = 10000;
   private queue: Array<{ sub: WebhookSub; event: HubEvent }> = [];
@@ -21,6 +26,7 @@ class WebhookDispatcher {
   /** Invalidate cached subscriptions — call after any webhook CRUD operation. */
   invalidateCache(): void {
     this.subsCache = null;
+    urlValidationCache.clear();
   }
 
   private getActiveSubscriptions(): WebhookSub[] {
@@ -31,6 +37,22 @@ class WebhookDispatcher {
         .all() as WebhookSub[];
     }
     return this.subsCache;
+  }
+
+  private async validateUrl(url: string): Promise<boolean> {
+    const cached = urlValidationCache.get(url);
+    if (cached && (Date.now() - cached.validatedAt) < URL_VALIDATION_TTL_MS) {
+      return cached.valid;
+    }
+
+    try {
+      await validateUrlForFetch(url);
+      urlValidationCache.set(url, { validatedAt: Date.now(), valid: true });
+      return true;
+    } catch {
+      urlValidationCache.set(url, { validatedAt: Date.now(), valid: false });
+      return false;
+    }
   }
 
   start(): void {
@@ -80,6 +102,13 @@ class WebhookDispatcher {
   }
 
   private async send(sub: WebhookSub, event: HubEvent): Promise<void> {
+    // Re-validate webhook URL at send time (SSRF TOCTOU protection)
+    const urlValid = await this.validateUrl(sub.url);
+    if (!urlValid) {
+      log.webhook.warn({ url: sub.url }, 'Webhook URL failed SSRF re-validation, skipping delivery');
+      return;
+    }
+
     const payload = JSON.stringify(event);
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -87,9 +116,18 @@ class WebhookDispatcher {
       'X-Hub-Timestamp': String(event.timestamp),
     };
 
-    if (sub.secret) {
+    // Decrypt secret if encrypted, then sign
+    let secret = sub.secret;
+    if (secret) {
+      try {
+        const { maybeDecrypt } = await import('../utils/encryption.js');
+        secret = maybeDecrypt(secret);
+      } catch {
+        // encryption module not available or decryption failed — use raw secret
+      }
+
       const signature = crypto
-        .createHmac('sha256', sub.secret)
+        .createHmac('sha256', secret)
         .update(payload)
         .digest('hex');
       headers['X-Hub-Signature'] = `sha256=${signature}`;

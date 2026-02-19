@@ -92,3 +92,19 @@ export const settingsUpdateSchema = z.object({
   autoDownloadMedia: z.boolean().optional(),
   maxMediaSizeMB: z.number().int().min(0).optional(),
 }).refine((d) => Object.keys(d).length > 0, { message: 'At least one setting is required' });
+
+// Group operation schemas
+export const groupSubjectSchema = z.object({
+  subject: z.string().min(1, 'subject is required').max(100, 'subject must be under 100 characters'),
+});
+
+export const groupDescriptionSchema = z.object({
+  description: z.string().max(2048, 'description must be under 2048 characters'),
+});
+
+export const groupParticipantsSchema = z.object({
+  participants: z.array(
+    z.string().regex(JID_REGEX, 'Invalid participant JID format')
+  ).min(1, 'participants must not be empty'),
+  action: z.enum(['add', 'remove', 'promote', 'demote']),
+});

@@ -5,6 +5,7 @@ import { validate } from '../middleware/validate.js';
 import { webhookCreateSchema } from '../schemas.js';
 import { asyncHandler, BadRequestError } from '../errors.js';
 import { webhookDispatcher } from '../../webhooks/dispatcher.js';
+import { config } from '../../config.js';
 import { v4 as uuid } from 'uuid';
 
 const router = Router();
@@ -29,11 +30,18 @@ router.post('/', validate(webhookCreateSchema), asyncHandler(async (req, res) =>
     throw new BadRequestError((e as Error).message);
   }
 
+  // Encrypt secret at rest if enabled
+  let storedSecret = secret || null;
+  if (storedSecret && config.security.encryptWebhookSecrets && config.security.encryptionKey) {
+    const { encryptWebhookSecret } = await import('../../utils/encryption.js');
+    storedSecret = encryptWebhookSecret(storedSecret);
+  }
+
   const id = uuid();
   const db = getDb();
   db.prepare(`
     INSERT INTO webhook_subscriptions (id, url, secret, events) VALUES (?, ?, ?, ?)
-  `).run(id, url, secret || null, events || '*');
+  `).run(id, url, storedSecret, events || '*');
   webhookDispatcher.invalidateCache();
   res.json({ success: true, id });
 }));

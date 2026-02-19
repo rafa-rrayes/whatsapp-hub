@@ -22,6 +22,7 @@ import {
   Webhook,
   Radio,
   Heart,
+  Shield,
   BookOpen,
 } from "lucide-react"
 
@@ -207,6 +208,7 @@ const API_SECTIONS: EndpointGroup[] = [
     "raw_message": { ... }
   }
 }`,
+        notes: "The raw_message field is omitted when SECURITY_STRIP_RAW_MESSAGES=true is set on the server.",
         curl: `curl -H "x-api-key: YOUR_KEY" http://localhost:3100/api/messages/3EB0A1B2C3D4E5F6`,
       },
     ],
@@ -375,7 +377,7 @@ const API_SECTIONS: EndpointGroup[] = [
           { name: "jid", type: "string", required: true, description: "Group JID (path parameter)" },
         ],
         body: [
-          { name: "subject", type: "string", required: true, description: "New group subject" },
+          { name: "subject", type: "string", required: true, description: "New group subject (1-100 characters)" },
         ],
         curl: `curl -X PUT -H "x-api-key: YOUR_KEY" -H "Content-Type: application/json" \\
   -d '{"subject":"New Group Name"}' \\
@@ -389,7 +391,7 @@ const API_SECTIONS: EndpointGroup[] = [
           { name: "jid", type: "string", required: true, description: "Group JID (path parameter)" },
         ],
         body: [
-          { name: "description", type: "string", required: true, description: "New group description" },
+          { name: "description", type: "string", required: true, description: "New group description (max 2048 characters)" },
         ],
         curl: `curl -X PUT -H "x-api-key: YOUR_KEY" -H "Content-Type: application/json" \\
   -d '{"description":"Updated description"}' \\
@@ -398,12 +400,12 @@ const API_SECTIONS: EndpointGroup[] = [
       {
         method: "POST",
         path: "/api/groups/:jid/participants",
-        description: "Add, remove, promote, or demote group participants.",
+        description: "Add, remove, promote, or demote group participants. All JIDs are validated.",
         params: [
           { name: "jid", type: "string", required: true, description: "Group JID (path parameter)" },
         ],
         body: [
-          { name: "participants", type: "string[]", required: true, description: "Array of participant JIDs" },
+          { name: "participants", type: "string[]", required: true, description: "Array of valid participant JIDs (e.g. number@s.whatsapp.net)" },
           { name: "action", type: "string", required: true, description: "One of: add, remove, promote, demote" },
         ],
         curl: `curl -X POST -H "x-api-key: YOUR_KEY" -H "Content-Type: application/json" \\
@@ -444,7 +446,7 @@ const API_SECTIONS: EndpointGroup[] = [
       {
         method: "POST",
         path: "/api/actions/send/image",
-        description: "Send an image via base64 data or a URL.",
+        description: "Send an image via base64 data or a URL. URL fetches are limited to MAX_MEDIA_SIZE_MB (default 100MB) and 30s timeout.",
         body: [
           { name: "jid", type: "string", required: true, description: "Recipient JID" },
           { name: "base64", type: "string", description: "Base64-encoded image data (or use url)" },
@@ -676,10 +678,10 @@ const API_SECTIONS: EndpointGroup[] = [
       {
         method: "POST",
         path: "/api/webhooks",
-        description: "Create a new webhook subscription.",
+        description: "Create a new webhook subscription. URLs are validated against SSRF at creation and at delivery time.",
         body: [
-          { name: "url", type: "string", required: true, description: "Webhook endpoint URL" },
-          { name: "secret", type: "string", description: "HMAC-SHA256 secret for signature verification" },
+          { name: "url", type: "string", required: true, description: "Webhook endpoint URL (max 2048 chars, no private IPs)" },
+          { name: "secret", type: "string", description: "HMAC-SHA256 secret for signature verification (encrypted at rest when SECURITY_ENCRYPT_WEBHOOK_SECRETS=true)" },
           { name: "events", type: "string", description: 'Comma-separated event filter, or "*" for all', default: '"*"' },
         ],
         response: `{
@@ -780,6 +782,41 @@ const API_SECTIONS: EndpointGroup[] = [
         response: `{ "deleted": 15000 }`,
         curl: `curl -X DELETE -H "x-api-key: YOUR_KEY" \\
   "http://localhost:3100/api/stats/events/prune?days=30"`,
+      },
+    ],
+  },
+  {
+    id: "settings",
+    title: "Settings",
+    description: "View and update runtime settings. Changes persist across restarts (stored in DB).",
+    prefix: "/api/settings",
+    endpoints: [
+      {
+        method: "GET",
+        path: "/api/settings",
+        description: "List all runtime settings with their current values, defaults, and override status.",
+        response: `{
+  "data": [
+    { "key": "logLevel", "value": "info", "default": "info", "overridden": false },
+    { "key": "autoDownloadMedia", "value": true, "default": true, "overridden": false },
+    { "key": "maxMediaSizeMB", "value": 100, "default": 100, "overridden": false }
+  ]
+}`,
+        curl: `curl -H "x-api-key: YOUR_KEY" http://localhost:3100/api/settings`,
+      },
+      {
+        method: "PUT",
+        path: "/api/settings",
+        description: "Update one or more runtime settings. At least one field is required.",
+        body: [
+          { name: "logLevel", type: "string", description: "Log level: trace, debug, info, warn, error, fatal" },
+          { name: "autoDownloadMedia", type: "boolean", description: "Auto-download media from messages" },
+          { name: "maxMediaSizeMB", type: "number", description: "Max media file size for auto-download (MB)" },
+        ],
+        response: `{ "data": [ ... ] }`,
+        curl: `curl -X PUT -H "x-api-key: YOUR_KEY" -H "Content-Type: application/json" \\
+  -d '{"logLevel":"debug"}' \\
+  http://localhost:3100/api/settings`,
       },
     ],
   },
@@ -1027,6 +1064,7 @@ export function ApiDocsPage() {
     ...API_SECTIONS.map((s) => ({ id: s.id, label: s.title })),
     { id: "websocket", label: "WebSocket" },
     { id: "webhook-events", label: "Webhook Events" },
+    { id: "security", label: "Security" },
     { id: "health", label: "Health Check" },
   ]
 
@@ -1068,14 +1106,14 @@ export function ApiDocsPage() {
             </div>
             <CardContent className="p-5 space-y-4">
               <p className="text-sm text-muted-foreground leading-relaxed">
-                All API endpoints require authentication via an API key. Provide it using any of the three methods below.
+                All API endpoints require authentication via an API key. Provide it using any of the methods below.
                 The key is set via the <code className="text-xs bg-muted rounded px-1.5 py-0.5 font-mono">API_KEY</code> environment variable.
               </p>
               <div className="grid gap-3 sm:grid-cols-3">
                 {[
-                  { label: "Header", code: "x-api-key: YOUR_KEY", desc: "Custom header" },
+                  { label: "Header (recommended)", code: "x-api-key: YOUR_KEY", desc: "Custom header" },
                   { label: "Bearer Token", code: "Authorization: Bearer YOUR_KEY", desc: "Standard auth header" },
-                  { label: "Query Parameter", code: "?api_key=YOUR_KEY", desc: "URL parameter" },
+                  { label: "Query Parameter", code: "?api_key=YOUR_KEY", desc: "Disabled when SECURITY_DISABLE_HTTP_QUERY_AUTH=true" },
                 ].map((m) => (
                   <div key={m.label} className="rounded-lg border border-border/50 p-3 bg-muted/20">
                     <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider mb-1.5">{m.label}</div>
@@ -1173,11 +1211,51 @@ curl "http://localhost:3100/api/connection/status?api_key=YOUR_KEY"`}
             <CardContent className="p-5 space-y-4">
               <p className="text-sm text-muted-foreground leading-relaxed">
                 Connect via WebSocket for real-time event streaming. All WhatsApp events are pushed to connected clients as they happen.
+                Stale connections are automatically cleaned up via ping/pong heartbeat (30s interval). Max 20 concurrent connections.
               </p>
 
-              <div className="rounded-lg bg-muted/40 border border-border/50 px-4 py-2.5 flex items-center gap-3">
-                <MethodBadge method="WS" />
-                <code className="text-sm font-mono text-foreground">/ws?api_key=YOUR_KEY</code>
+              <div className="space-y-2">
+                <div className="rounded-lg bg-muted/40 border border-border/50 px-4 py-2.5 flex items-center gap-3">
+                  <MethodBadge method="WS" />
+                  <code className="text-sm font-mono text-foreground">/ws?ticket=ONE_TIME_TICKET</code>
+                  <Badge variant="secondary" className="text-[10px] font-mono ml-auto">Recommended</Badge>
+                </div>
+                <div className="rounded-lg bg-muted/40 border border-border/50 px-4 py-2.5 flex items-center gap-3">
+                  <MethodBadge method="WS" />
+                  <code className="text-sm font-mono text-foreground">/ws?api_key=YOUR_KEY</code>
+                  <Badge variant="outline" className="text-[10px] font-mono ml-auto">Legacy</Badge>
+                </div>
+              </div>
+
+              <div>
+                <div className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground/60 mb-2">
+                  Ticket-based auth (SECURITY_WS_TICKET_AUTH=true)
+                </div>
+                <p className="text-xs text-muted-foreground mb-3">
+                  When enabled, obtain a one-time ticket via <code className="bg-muted rounded px-1 py-0.5 font-mono">POST /api/ws/ticket</code>, then connect
+                  with <code className="bg-muted rounded px-1 py-0.5 font-mono">?ticket=...</code>. Tickets expire after 30 seconds and can only be used once.
+                  This prevents the API key from appearing in WebSocket URLs (browser history, server logs). Non-browser clients can still use the
+                  {" "}<code className="bg-muted rounded px-1 py-0.5 font-mono">x-api-key</code> header.
+                </p>
+              </div>
+
+              <div>
+                <div className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground/60 mb-2">
+                  Ticket Endpoint
+                </div>
+                <div className="border-b border-border/30 w-full flex items-start gap-3 px-4 py-3">
+                  <MethodBadge method="POST" />
+                  <div className="flex-1 min-w-0">
+                    <code className="text-[13px] font-mono text-foreground/90">/api/ws/ticket</code>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Issue a one-time WebSocket ticket. Requires API key authentication. Returns a ticket valid for 30 seconds.
+                    </p>
+                  </div>
+                </div>
+                <div className="px-4 py-3 ml-[76px] space-y-3">
+                  <CodeBlock code={`curl -X POST -H "x-api-key: YOUR_KEY" http://localhost:3100/api/ws/ticket`} label="Example Request" />
+                  <CodeBlock code={`{ "ticket": "abc123...", "expiresIn": 30 }`} label="Response" />
+                </div>
               </div>
 
               <div>
@@ -1195,9 +1273,14 @@ curl "http://localhost:3100/api/connection/status?api_key=YOUR_KEY"`}
                     </thead>
                     <tbody>
                       <tr className="border-b border-border/30">
+                        <td className="py-2 px-3 font-mono text-xs">ticket</td>
+                        <td className="py-2 px-3"><span className="text-[10px] font-medium text-amber-400">see notes</span></td>
+                        <td className="py-2 px-3 text-xs text-muted-foreground">One-time ticket from POST /api/ws/ticket (preferred when SECURITY_WS_TICKET_AUTH=true)</td>
+                      </tr>
+                      <tr className="border-b border-border/30">
                         <td className="py-2 px-3 font-mono text-xs">api_key</td>
-                        <td className="py-2 px-3"><span className="text-[10px] font-medium text-amber-400">required</span></td>
-                        <td className="py-2 px-3 text-xs text-muted-foreground">Authentication key</td>
+                        <td className="py-2 px-3"><span className="text-[10px] font-medium text-amber-400">see notes</span></td>
+                        <td className="py-2 px-3 text-xs text-muted-foreground">API key (legacy mode, or when ticket auth is disabled)</td>
                       </tr>
                       <tr>
                         <td className="py-2 px-3 font-mono text-xs">events</td>
@@ -1211,11 +1294,29 @@ curl "http://localhost:3100/api/connection/status?api_key=YOUR_KEY"`}
 
               <Tabs defaultValue="js">
                 <TabsList className="h-8">
-                  <TabsTrigger className="text-xs px-3" value="js">JavaScript</TabsTrigger>
+                  <TabsTrigger className="text-xs px-3" value="js">JavaScript (ticket)</TabsTrigger>
+                  <TabsTrigger className="text-xs px-3" value="js-legacy">JavaScript (legacy)</TabsTrigger>
                   <TabsTrigger className="text-xs px-3" value="python">Python</TabsTrigger>
                   <TabsTrigger className="text-xs px-3" value="curl">wscat</TabsTrigger>
                 </TabsList>
                 <TabsContent value="js" className="mt-3">
+                  <CodeBlock code={`// Step 1: Get a one-time ticket
+const res = await fetch("http://localhost:3100/api/ws/ticket", {
+  method: "POST",
+  headers: { "x-api-key": "YOUR_KEY" },
+});
+const { ticket } = await res.json();
+
+// Step 2: Connect with the ticket
+const ws = new WebSocket(\`ws://localhost:3100/ws?ticket=\${ticket}\`);
+
+ws.onopen = () => console.log("Connected");
+ws.onmessage = (event) => {
+  const data = JSON.parse(event.data);
+  console.log(data.type, data.data);
+};`} />
+                </TabsContent>
+                <TabsContent value="js-legacy" className="mt-3">
                   <CodeBlock code={`const ws = new WebSocket("ws://localhost:3100/ws?api_key=YOUR_KEY");
 
 ws.onopen = () => console.log("Connected");
@@ -1244,7 +1345,10 @@ asyncio.run(listen())`} />
 wscat -c "ws://localhost:3100/ws?api_key=YOUR_KEY"
 
 # With event filter
-wscat -c "ws://localhost:3100/ws?api_key=YOUR_KEY&events=wa.messages.upsert,wa.presence.update"`} />
+wscat -c "ws://localhost:3100/ws?api_key=YOUR_KEY&events=wa.messages.upsert,wa.presence.update"
+
+# With x-api-key header (works when ticket auth is enabled)
+wscat -c "ws://localhost:3100/ws" -H "x-api-key: YOUR_KEY"`} />
                 </TabsContent>
               </Tabs>
 
@@ -1337,6 +1441,74 @@ const signature = crypto.createHmac("sha256", secret).update(body).digest("hex")
 const isValid = req.headers["x-hub-signature"] === "sha256=" + signature;`}
                 label="Webhook Payload & Verification"
               />
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Security Configuration */}
+        <div
+          id="security"
+          ref={(el) => { sectionRefs.current["security"] = el }}
+        >
+          <Card className="gap-0 py-0 overflow-hidden">
+            <div className="flex items-center gap-2.5 px-5 py-4 border-b border-border/50 bg-muted/20">
+              <Shield className="h-4 w-4 text-amber-400" />
+              <h2 className="text-sm font-semibold">Security Configuration</h2>
+              <Badge variant="outline" className="text-[10px] font-mono ml-2">Server-side</Badge>
+            </div>
+            <CardContent className="p-5 space-y-4">
+              <p className="text-sm text-muted-foreground leading-relaxed">
+                WhatsApp Hub includes configurable security features controlled via environment variables.
+                All features default to off for backward compatibility. Set them in your <code className="text-xs bg-muted rounded px-1.5 py-0.5 font-mono">.env</code> file
+                or Docker environment.
+              </p>
+
+              <div>
+                <div className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground/60 mb-2">
+                  Security Environment Variables
+                </div>
+                <div className="rounded-lg border border-border/50 overflow-hidden">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-border/50 bg-muted/30">
+                        <th className="py-2 px-3 text-left text-[11px] font-medium text-muted-foreground uppercase tracking-wider">Variable</th>
+                        <th className="py-2 px-3 text-left text-[11px] font-medium text-muted-foreground uppercase tracking-wider">Default</th>
+                        <th className="py-2 px-3 text-left text-[11px] font-medium text-muted-foreground uppercase tracking-wider">Description</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {[
+                        { name: "SECURITY_WS_TICKET_AUTH", def: "false", desc: "Use one-time tickets for WebSocket auth instead of api_key in query string", level: "!!" },
+                        { name: "SECURITY_DISABLE_HTTP_QUERY_AUTH", def: "false", desc: "Disable api_key query parameter on HTTP endpoints", level: "!!" },
+                        { name: "SECURITY_ENCRYPT_DATABASE", def: "false", desc: "Encrypt SQLite database at rest with SQLCipher (requires ENCRYPTION_KEY and @journeyapps/sqlcipher package)", level: "--" },
+                        { name: "SECURITY_ENCRYPT_WEBHOOK_SECRETS", def: "false", desc: "Encrypt webhook HMAC secrets at rest (requires ENCRYPTION_KEY)", level: "--" },
+                        { name: "SECURITY_STRIP_RAW_MESSAGES", def: "false", desc: "Strip raw_message field from API responses", level: "--" },
+                        { name: "ENCRYPTION_KEY", def: "—", desc: "Master encryption key (min 16 chars) for database and webhook secret encryption", level: "" },
+                        { name: "SECURITY_AUTO_PRUNE", def: "false", desc: "Auto-prune old presence and event log entries every 6 hours", level: "" },
+                        { name: "PRESENCE_RETENTION_DAYS", def: "7", desc: "Days to keep presence log entries (when auto-prune is enabled)", level: "" },
+                        { name: "EVENT_RETENTION_DAYS", def: "30", desc: "Days to keep event log entries (when auto-prune is enabled)", level: "" },
+                        { name: "SECURITY_HASH_EVENT_JIDS", def: "false", desc: "Hash phone numbers in event_log for privacy (one-way)", level: "" },
+                        { name: "SECURITY_SEC_FETCH_CHECK", def: "false", desc: "Block cross-site browser requests via Sec-Fetch-Site header", level: "" },
+                      ].map((v) => (
+                        <tr key={v.name} className="border-b border-border/30 last:border-0">
+                          <td className="py-2 px-3 font-mono text-xs text-foreground/90">
+                            {v.name}
+                            {v.level === "!!" && <span className="ml-1.5 text-[9px] text-amber-400 font-sans">STRONGLY REC.</span>}
+                            {v.level === "--" && <span className="ml-1.5 text-[9px] text-blue-400 font-sans">REC.</span>}
+                          </td>
+                          <td className="py-2 px-3 font-mono text-xs text-muted-foreground">{v.def}</td>
+                          <td className="py-2 px-3 text-xs text-muted-foreground">{v.desc}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <p className="text-xs text-muted-foreground/60 italic">
+                On startup, the server prints a summary of which security features are enabled and which are recommended.
+                Always-on hardening (Bearer token parsing, WebSocket ping/pong, input validation, SSRF re-validation, rate limiting per API key) requires no configuration.
+              </p>
             </CardContent>
           </Card>
         </div>

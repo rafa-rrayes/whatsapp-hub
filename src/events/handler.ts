@@ -10,9 +10,15 @@ import { eventsRepo } from '../database/repositories/events.js';
 import { mediaManager } from '../media/manager.js';
 import { connectionManager } from '../connection/manager.js';
 import { normalizeJid, resolveToPhoneJid } from '../utils/jid.js';
+import { hashJid } from '../utils/security.js';
+import { config } from '../config.js';
 import { log } from '../utils/logger.js';
 import { v4 as uuid } from 'uuid';
 import type { MediaMessageFields, ContactWithShortName } from './types.js';
+
+function eventJid(jid: string): string {
+  return hashJid(jid, config.security.hashEventJids);
+}
 
 function fetchGroupMetadataAsync(jid: string): void {
   connectionManager.getGroupMetadata(jid).then((metadata) => {
@@ -247,7 +253,7 @@ export function registerEventHandlers(): void {
 
         eventsRepo.log('message.received', {
           id: key.id,
-          jid: remoteJid,
+          jid: eventJid(remoteJid),
           type: msgType,
           fromMe: key.fromMe,
         });
@@ -486,7 +492,11 @@ export function registerEventHandlers(): void {
   eventBus.on('wa.group-participants.update', (event) => {
     try {
       const { id, participants, action } = event.data as BaileysEventMap['group-participants.update'];
-      eventsRepo.log('group.participants_update', { groupJid: id, participants, action });
+      eventsRepo.log('group.participants_update', {
+        groupJid: eventJid(id),
+        participants: participants.map((p) => eventJid(p.id)),
+        action,
+      });
       // Re-fetch full participant list to keep it in sync
       fetchGroupMetadataAsync(id);
     } catch (err) {
@@ -511,7 +521,7 @@ export function registerEventHandlers(): void {
           call.status,
           Math.floor(Date.now() / 1000)
         );
-        eventsRepo.log('call', { from: call.from, status: call.status, isVideo: call.isVideo });
+        eventsRepo.log('call', { from: eventJid(call.from), status: call.status, isVideo: call.isVideo });
       } catch (err) {
         log.event.error({ err }, 'Error processing call');
       }

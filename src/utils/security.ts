@@ -171,3 +171,24 @@ export function isInsecureDefaultKey(key: string): boolean {
 export function generateSecureKey(): string {
   return crypto.randomBytes(32).toString('base64url');
 }
+
+/**
+ * Extract a Bearer token from an Authorization header value.
+ * Handles case-insensitive "Bearer" prefix and extra whitespace.
+ * Returns null if the header doesn't match the Bearer scheme.
+ */
+export function extractBearerToken(header: string | undefined): string | null {
+  if (!header) return null;
+  const match = header.match(/^Bearer\s+(.+)$/i);
+  return match ? match[1] : null;
+}
+
+/**
+ * Hash a JID for privacy in event logs.
+ * Returns a truncated SHA-256 hash with @hashed suffix.
+ * When disabled (pass-through mode), returns the JID unchanged.
+ */
+export function hashJid(jid: string, enabled: boolean): string {
+  if (!enabled) return jid;
+  return crypto.createHash('sha256').update(jid).digest('hex').slice(0, 16) + '@hashed';
+}

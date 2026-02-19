@@ -7,6 +7,8 @@ import { createServer } from './api/server.js';
 import { closeWebSockets } from './websocket/server.js';
 import { loadJidAliases, migrateExistingJids } from './utils/jid.js';
 import { initSettings } from './settings.js';
+import { printSecurityWarnings } from './utils/security-warnings.js';
+import { startAutoPrune, stopAutoPrune } from './utils/auto-prune.js';
 import { log } from './utils/logger.js';
 import { startErrorServer } from './error-server.js';
 
@@ -20,6 +22,12 @@ async function main() {
   // 1a. Load runtime settings from DB (uses .env as defaults)
   log.boot.info('Loading runtime settings...');
   initSettings();
+
+  // 1a-1. Print security recommendations
+  printSecurityWarnings();
+
+  // 1a-2. Start auto-pruning if enabled
+  startAutoPrune();
 
   // 1b. Load JID aliases and migrate existing LID data
   log.boot.info('Loading JID aliases...');
@@ -58,10 +66,13 @@ async function main() {
     // 3. Disconnect WhatsApp cleanly
     await connectionManager.disconnect();
 
-    // 4. Flush webhook queue
+    // 4. Stop auto-prune timer
+    stopAutoPrune();
+
+    // 5. Flush webhook queue
     await webhookDispatcher.drain();
 
-    // 5. Close database
+    // 6. Close database
     closeDb();
 
     log.boot.info('Shutdown complete');
