@@ -27,7 +27,7 @@ WhatsApp  <-->  Baileys Connection  <-->  Event Bus  <-->  SQLite DB
 - **WebSocket streaming** — real-time events with optional event type filtering, ticket-based auth
 - **Full-text search** — search across all messages
 - **Web dashboard** — 10-page interactive UI for browsing everything
-- **Security hardening** — database encryption (SQLCipher), webhook secret encryption, configurable security toggles
+- **Security hardening** — database encryption at rest, webhook secret encryption, configurable security toggles
 - **Docker-ready** — single `docker compose up` to deploy
 
 ## Quick Start
@@ -339,13 +339,13 @@ ws.on("message", (data) => {
 
 ### Security
 
-All security features default to off for backward compatibility. The server prints recommendations at startup.
+All security features default to off. The server prints recommendations at startup.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `SECURITY_WS_TICKET_AUTH` | `false` | Use one-time tickets for WebSocket auth instead of api_key in URL |
 | `SECURITY_DISABLE_HTTP_QUERY_AUTH` | `false` | Disable `?api_key=` query parameter on HTTP endpoints |
-| `SECURITY_ENCRYPT_DATABASE` | `false` | Encrypt SQLite database at rest with SQLCipher (requires `ENCRYPTION_KEY`) |
+| `SECURITY_ENCRYPT_DATABASE` | `false` | Encrypt SQLite database at rest (requires `ENCRYPTION_KEY`) |
 | `SECURITY_ENCRYPT_WEBHOOK_SECRETS` | `false` | Encrypt webhook HMAC secrets at rest (requires `ENCRYPTION_KEY`) |
 | `SECURITY_STRIP_RAW_MESSAGES` | `false` | Omit `raw_message` field from API responses |
 | `ENCRYPTION_KEY` | — | Master encryption key (min 16 chars). Required by database and webhook secret encryption |
@@ -376,23 +376,13 @@ Leave it at `false` (the default) when accessing the app directly over HTTP, oth
 
 ```
 data/
-├── whatsapp-hub.db        # SQLite database (WAL mode, optionally encrypted with SQLCipher)
+├── whatsapp-hub.db        # SQLite database (WAL mode, optionally encrypted)
 ├── auth/default/          # Baileys session credentials
 └── media/
     └── 2025/01/15/        # Date-organized media files
 ```
 
-When `SECURITY_ENCRYPT_DATABASE=true`, the database is encrypted at rest using SQLCipher (AES-256). Existing unencrypted databases are automatically migrated on first start (a backup is created beforehand).
-
-**Non-Docker:** install the optional package directly:
-```bash
-npm install @journeyapps/sqlcipher
-```
-
-**Docker:** use the encryption overlay (Debian-based image with SQLCipher pre-installed):
-```bash
-docker compose -f docker-compose.yml -f docker-compose.encrypted.yml up -d
-```
+When `SECURITY_ENCRYPT_DATABASE=true`, the database is encrypted at rest (AES-256). Existing unencrypted databases are automatically migrated on first start (a backup is created beforehand). No special build steps or system libraries are needed — encryption support is bundled.
 
 ## Development
 
@@ -413,7 +403,7 @@ npm run dev
 
 ## Tech Stack
 
-**Backend:** Node.js, TypeScript, Express, Baileys, SQLCipher/better-sqlite3, Pino
+**Backend:** Node.js, TypeScript, Express, Baileys, better-sqlite3 (with encryption), Pino
 
 **Frontend:** React, TypeScript, Vite, Tailwind CSS, Radix UI, Zustand, TanStack Query, Recharts
 

@@ -1480,7 +1480,7 @@ const isValid = req.headers["x-hub-signature"] === "sha256=" + signature;`}
                       {[
                         { name: "SECURITY_WS_TICKET_AUTH", def: "false", desc: "Use one-time tickets for WebSocket auth instead of api_key in query string", level: "!!" },
                         { name: "SECURITY_DISABLE_HTTP_QUERY_AUTH", def: "false", desc: "Disable api_key query parameter on HTTP endpoints", level: "!!" },
-                        { name: "SECURITY_ENCRYPT_DATABASE", def: "false", desc: "Encrypt SQLite database at rest with SQLCipher (requires ENCRYPTION_KEY and @journeyapps/sqlcipher package)", level: "--" },
+                        { name: "SECURITY_ENCRYPT_DATABASE", def: "false", desc: "Encrypt SQLite database at rest (requires ENCRYPTION_KEY)", level: "--" },
                         { name: "SECURITY_ENCRYPT_WEBHOOK_SECRETS", def: "false", desc: "Encrypt webhook HMAC secrets at rest (requires ENCRYPTION_KEY)", level: "--" },
                         { name: "SECURITY_STRIP_RAW_MESSAGES", def: "false", desc: "Strip raw_message field from API responses", level: "--" },
                         { name: "ENCRYPTION_KEY", def: "—", desc: "Master encryption key (min 16 chars) for database and webhook secret encryption", level: "" },

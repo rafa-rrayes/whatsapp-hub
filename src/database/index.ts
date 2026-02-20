@@ -1,5 +1,4 @@
-import Database from 'better-sqlite3';
-import { createRequire } from 'module';
+import Database from 'better-sqlite3-multiple-ciphers';
 import crypto from 'crypto';
 import { config } from '../config.js';
 import { applySchema } from './schema.js';
@@ -15,27 +14,6 @@ export function getDb(): Database.Database {
     throw new Error('Database not initialized. Call initDb() first.');
   }
   return db;
-}
-
-/**
- * Load the database constructor. When encryption is enabled, dynamically load
- * @journeyapps/sqlcipher (API-compatible with better-sqlite3) so the Docker
- * image doesn't depend on a native module that only ships pre-built binaries
- * for a subset of platforms.
- */
-function getDatabaseConstructor(): typeof Database {
-  if (!config.security.encryptDatabase) return Database;
-
-  const esmRequire = createRequire(import.meta.url);
-  try {
-    return esmRequire('@journeyapps/sqlcipher') as typeof Database;
-  } catch {
-    throw new Error(
-      'Database encryption requires the @journeyapps/sqlcipher package.\n' +
-      'Install it: npm install @journeyapps/sqlcipher\n' +
-      'Pre-built binaries may not be available for all platforms (e.g. Alpine ARM64).',
-    );
-  }
 }
 
 function applyEncryptionKey(database: Database.Database, derivedKeyHex: string): void {
@@ -59,44 +37,40 @@ function testDbAccess(database: Database.Database): boolean {
   }
 }
 
-function migrateToEncrypted(dbPath: string, keyHex: string, DbConstructor: typeof Database): void {
+function migrateToEncrypted(dbPath: string, keyHex: string): void {
   log.db.info('Migrating unencrypted database to encrypted format...');
 
-  // 1. Open unencrypted DB and checkpoint WAL
-  const unencryptedDb = new DbConstructor(dbPath);
-  unencryptedDb.pragma('wal_checkpoint(TRUNCATE)');
-
-  // 2. Create backup
+  // 1. Create backup before any modification
   const backupPath = dbPath + '.pre-encryption-backup';
   log.db.info({ backupPath }, 'Creating backup of unencrypted database');
   fs.copyFileSync(dbPath, backupPath);
 
-  // 3. Export to encrypted DB
-  const encryptedPath = dbPath + '.encrypted-tmp';
+  // 2. Open unencrypted DB, switch out of WAL (rekey requires DELETE journal mode), then encrypt
+  const database = new Database(dbPath);
+  database.pragma('wal_checkpoint(TRUNCATE)');
+  database.pragma('journal_mode = DELETE');
+
   try {
-    unencryptedDb.exec(`ATTACH DATABASE '${encryptedPath}' AS encrypted KEY "x'${keyHex}'"`)
-    unencryptedDb.exec(`SELECT sqlcipher_export('encrypted')`);
-    unencryptedDb.exec(`DETACH DATABASE encrypted`);
-    unencryptedDb.close();
+    database.pragma(`rekey="x'${keyHex}'"`);
+    database.close();
   } catch (err) {
-    unencryptedDb.close();
-    // Clean up temp file
-    try { fs.unlinkSync(encryptedPath); } catch {}
-    throw new Error(`Database encryption migration failed: ${err instanceof Error ? err.message : String(err)}. Original database is untouched.`);
+    database.close();
+    // Restore from backup
+    fs.copyFileSync(backupPath, dbPath);
+    throw new Error(`Database encryption migration failed: ${err instanceof Error ? err.message : String(err)}. Original database restored from backup.`);
   }
 
-  // 4. Verify the encrypted DB
-  const verifyDb = new DbConstructor(encryptedPath);
+  // 3. Verify the now-encrypted DB can be opened with the key
+  const verifyDb = new Database(dbPath);
   applyEncryptionKey(verifyDb, keyHex);
   if (!testDbAccess(verifyDb)) {
     verifyDb.close();
-    try { fs.unlinkSync(encryptedPath); } catch {}
-    throw new Error('Database encryption migration failed: verification of encrypted database failed. Original database is untouched.');
+    // Restore from backup
+    fs.copyFileSync(backupPath, dbPath);
+    throw new Error('Database encryption migration failed: verification failed. Original database restored from backup.');
   }
   verifyDb.close();
 
-  // 5. Atomic swap
-  fs.renameSync(encryptedPath, dbPath);
   log.db.info('Database encryption migration completed successfully');
 }
 
@@ -106,12 +80,11 @@ export function initDb(): Database.Database {
     fs.mkdirSync(dir, { recursive: true, mode: 0o750 });
   }
 
-  const DbConstructor = getDatabaseConstructor();
   const keyHex = deriveDbKey();
 
   if (keyHex) {
-    // Encryption enabled — try opening with key first
-    db = new DbConstructor(config.dbPath);
+    // Try opening with key first
+    db = new Database(config.dbPath);
     fs.chmodSync(config.dbPath, 0o640);
     applyEncryptionKey(db, keyHex);
 
@@ -119,16 +92,16 @@ export function initDb(): Database.Database {
       // Key didn't work — check if DB is unencrypted and needs migration
       db.close();
 
-      const plainDb = new DbConstructor(config.dbPath);
+      const plainDb = new Database(config.dbPath);
       const isPlaintext = testDbAccess(plainDb);
       plainDb.close();
 
       if (isPlaintext) {
         // Unencrypted DB needs migration
-        migrateToEncrypted(config.dbPath, keyHex, DbConstructor);
+        migrateToEncrypted(config.dbPath, keyHex);
 
         // Reopen the now-encrypted DB
-        db = new DbConstructor(config.dbPath);
+        db = new Database(config.dbPath);
         fs.chmodSync(config.dbPath, 0o640);
         applyEncryptionKey(db, keyHex);
 
@@ -141,7 +114,7 @@ export function initDb(): Database.Database {
     }
   } else {
     // No encryption — standard open
-    db = new DbConstructor(config.dbPath);
+    db = new Database(config.dbPath);
     fs.chmodSync(config.dbPath, 0o640);
   }
 

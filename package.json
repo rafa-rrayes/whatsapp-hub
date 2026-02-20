@@ -33,7 +33,7 @@
   "dependencies": {
     "@hapi/boom": "^10.0.1",
     "@whiskeysockets/baileys": "^7.0.0-rc.9",
-    "better-sqlite3": "^11.7.0",
+    "better-sqlite3-multiple-ciphers": "^11.7.0",
     "content-disposition": "^1.0.1",
     "dotenv": "^16.4.7",
     "express": "^4.21.1",

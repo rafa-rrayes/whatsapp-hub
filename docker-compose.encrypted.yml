@@ -1,9 +1,0 @@
-# Overlay for database encryption support.
-# Usage: docker compose -f docker-compose.yml -f docker-compose.encrypted.yml up -d
-#
-# Requires SECURITY_ENCRYPT_DATABASE=true and ENCRYPTION_KEY in your .env file.
-services:
-  whatsapp-hub:
-    build:
-      context: .
-      dockerfile: Dockerfile.encrypted
