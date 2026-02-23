@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-const JID_REGEX = /^(\d+@(s\.whatsapp\.net|lid|broadcast)|\d+-\d+@g\.us|status@broadcast)$/;
+const JID_REGEX = /^(\d+@(s\.whatsapp\.net|lid|broadcast)|\d+(-\d+)?@g\.us|status@broadcast)$/;
 
 const jid = z.string().regex(JID_REGEX, 'Invalid JID format');
 

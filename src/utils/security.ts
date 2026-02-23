@@ -135,10 +135,10 @@ export function clampPagination(value: unknown, defaultVal: number, max: number)
 
 /**
  * Validate a WhatsApp JID format.
- * Accepts: number@s.whatsapp.net, number-number@g.us, number@lid,
- * status@broadcast, number@broadcast.
+ * Accepts: number@s.whatsapp.net, number@g.us, number-number@g.us,
+ * number@lid, status@broadcast, number@broadcast.
  */
-const JID_REGEX = /^(\d+@(s\.whatsapp\.net|lid|broadcast)|\d+-\d+@g\.us|status@broadcast)$/;
+const JID_REGEX = /^(\d+@(s\.whatsapp\.net|lid|broadcast)|\d+(-\d+)?@g\.us|status@broadcast)$/;
 
 export function isValidJid(jid: unknown): boolean {
   if (typeof jid !== 'string') return false;
