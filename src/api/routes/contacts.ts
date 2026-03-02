@@ -3,13 +3,14 @@ import { contactsRepo } from '../../database/repositories/contacts.js';
 import { connectionManager } from '../../connection/manager.js';
 import { isValidJid } from '../../utils/security.js';
 import { asyncHandler, NotFoundError, BadRequestError } from '../errors.js';
+import { toApiContact } from '../../types/mappers.js';
 
 const router = Router();
 
 // GET /api/contacts — list all contacts
 router.get('/', asyncHandler(async (req, res) => {
   const contacts = contactsRepo.getAll(req.query.search as string);
-  res.json({ data: contacts, total: contacts.length });
+  res.json({ data: contacts.map(toApiContact), total: contacts.length });
 }));
 
 // GET /api/contacts/:jid — single contact
@@ -21,7 +22,7 @@ router.get('/:jid', asyncHandler(async (req, res) => {
   if (!contact) {
     throw new NotFoundError('Contact not found');
   }
-  res.json(contact);
+  res.json(toApiContact(contact));
 }));
 
 // GET /api/contacts/:jid/profile-pic — get profile picture URL

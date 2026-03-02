@@ -339,12 +339,12 @@ ws.on("message", (data) => {
 
 ### Security
 
-All security features default to off. The server prints recommendations at startup.
+> **Migration notice:** Starting with this version, `SECURITY_WS_TICKET_AUTH` and `SECURITY_DISABLE_HTTP_QUERY_AUTH` now **default to ON** (previously OFF). If you rely on query-string API key auth or raw WebSocket connections with `?api_key=`, explicitly set `SECURITY_WS_TICKET_AUTH=false` and/or `SECURITY_DISABLE_HTTP_QUERY_AUTH=false` in your `.env` file or Docker Compose environment.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `SECURITY_WS_TICKET_AUTH` | `false` | Use one-time tickets for WebSocket auth instead of api_key in URL |
-| `SECURITY_DISABLE_HTTP_QUERY_AUTH` | `false` | Disable `?api_key=` query parameter on HTTP endpoints |
+| `SECURITY_WS_TICKET_AUTH` | `true` | Use one-time tickets for WebSocket auth instead of api_key in URL |
+| `SECURITY_DISABLE_HTTP_QUERY_AUTH` | `true` | Disable `?api_key=` query parameter on HTTP endpoints |
 | `SECURITY_ENCRYPT_DATABASE` | `false` | Encrypt SQLite database at rest (requires `ENCRYPTION_KEY`) |
 | `SECURITY_ENCRYPT_WEBHOOK_SECRETS` | `false` | Encrypt webhook HMAC secrets at rest (requires `ENCRYPTION_KEY`) |
 | `SECURITY_STRIP_RAW_MESSAGES` | `false` | Omit `raw_message` field from API responses |

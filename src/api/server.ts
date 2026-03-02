@@ -20,6 +20,8 @@ import statsRouter from './routes/stats.js';
 import settingsRouter from './routes/settings.js';
 import wsTicketRouter from './routes/ws-ticket.js';
 import { secFetchMiddleware } from './middleware/sec-fetch.js';
+import { generateOpenApiSpec } from './openapi.js';
+import { deprecationMiddleware } from './middleware/deprecation.js';
 
 /**
  * Returns true if `origin` is a loopback or RFC-1918 private address on the given port.
@@ -153,10 +155,23 @@ export function createServer() {
   // Sec-Fetch-* header validation (before auth, blocks cross-site browser requests)
   if (config.security.secFetchCheck) {
     app.use('/api', secFetchMiddleware);
+    app.use('/api/v1', secFetchMiddleware);
   }
 
-  // Auth middleware for all /api routes
+  // OpenAPI spec (no auth required)
+  app.get('/api/openapi.json', (_req, res) => {
+    res.json(generateOpenApiSpec());
+  });
+  app.get('/api/v1/openapi.json', (_req, res) => {
+    res.json(generateOpenApiSpec());
+  });
+
+  // Auth middleware for /api and /api/v1 routes
+  app.use('/api/v1', authMiddleware);
   app.use('/api', authMiddleware);
+
+  // Deprecation headers on unversioned /api access
+  app.use('/api', deprecationMiddleware);
 
   // Stricter rate limit on action endpoints (message sending, connection management)
   const actionLimiter = rateLimit({
@@ -167,30 +182,40 @@ export function createServer() {
     message: { error: 'Too many action requests, please slow down.' },
   });
   app.use('/api/actions', actionLimiter);
+  app.use('/api/v1/actions', actionLimiter);
   app.use('/api/connection', actionLimiter);
+  app.use('/api/v1/connection', actionLimiter);
 
   // Higher body limit only for action routes that accept base64 media
   const mediaBodyParser = express.json({ limit: '15mb' });
-  app.use('/api/actions/send/image', mediaBodyParser);
-  app.use('/api/actions/send/document', mediaBodyParser);
-  app.use('/api/actions/send/audio', mediaBodyParser);
-  app.use('/api/actions/send/video', mediaBodyParser);
-  app.use('/api/actions/send/sticker', mediaBodyParser);
+  const mediaPaths = ['image', 'document', 'audio', 'video', 'sticker'];
+  for (const p of mediaPaths) {
+    app.use(`/api/actions/send/${p}`, mediaBodyParser);
+    app.use(`/api/v1/actions/send/${p}`, mediaBodyParser);
+  }
 
   // WebSocket ticket route (must be registered before generic routes)
   app.use('/api/ws', wsTicketRouter);
+  app.use('/api/v1/ws', wsTicketRouter);
 
-  // Register routes
-  app.use('/api/messages', messagesRouter);
-  app.use('/api/contacts', contactsRouter);
-  app.use('/api/groups', groupsRouter);
-  app.use('/api/media', mediaRouter);
-  app.use('/api/actions', actionsRouter);
-  app.use('/api/connection', connectionRouter);
-  app.use('/api/chats', chatsRouter);
-  app.use('/api/webhooks', webhooksRouter);
-  app.use('/api/stats', statsRouter);
-  app.use('/api/settings', settingsRouter);
+  // Route definitions — shared between /api (legacy) and /api/v1 (canonical)
+  const routes: Array<[string, express.Router]> = [
+    ['/messages', messagesRouter],
+    ['/contacts', contactsRouter],
+    ['/groups', groupsRouter],
+    ['/media', mediaRouter],
+    ['/actions', actionsRouter],
+    ['/connection', connectionRouter],
+    ['/chats', chatsRouter],
+    ['/webhooks', webhooksRouter],
+    ['/stats', statsRouter],
+    ['/settings', settingsRouter],
+  ];
+
+  for (const [path, router] of routes) {
+    app.use(`/api/v1${path}`, router);
+    app.use(`/api${path}`, router);
+  }
 
   // API docs summary
   app.get('/api', (_req, res) => {
@@ -248,12 +273,15 @@ export function createServer() {
           'GET /api/media/:id': 'Media metadata',
           'GET /api/media/:id/download': 'Download media file',
           'GET /api/media/by-message/:messageId': 'Get media by message ID',
+          'POST /api/media/:id/retry': 'Retry failed media download',
         },
         webhooks: {
           'GET /api/webhooks': 'List webhook subscriptions',
           'POST /api/webhooks': 'Create subscription { url, secret?, events? }',
           'DELETE /api/webhooks/:id': 'Delete subscription',
           'PUT /api/webhooks/:id/toggle': 'Toggle active/inactive',
+          'GET /api/webhooks/deliveries': 'Query webhook delivery log',
+          'POST /api/webhooks/deliveries/:id/retry': 'Retry failed webhook delivery',
         },
         stats: {
           'GET /api/stats': 'Dashboard overview',
@@ -269,6 +297,12 @@ export function createServer() {
           'POST /api/ws/ticket': 'Get a one-time WebSocket ticket (requires SECURITY_WS_TICKET_AUTH=true)',
           'WS /ws?ticket=&events=': 'Real-time event stream (events param is optional comma-separated filter)',
         },
+        docs: {
+          'GET /api/openapi.json': 'OpenAPI 3.1 specification (no auth required)',
+        },
+      },
+      versioning: {
+        note: 'All endpoints are available under both /api/ (deprecated) and /api/v1/ (canonical). Migrate to /api/v1/ before the Sunset date.',
       },
     });
   });

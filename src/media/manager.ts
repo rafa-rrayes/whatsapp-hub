@@ -10,9 +10,19 @@ import path from 'path';
 import crypto from 'crypto';
 import mime from 'mime-types';
 
+/** Retry delays in milliseconds: 5s, 30s, 120s */
+const RETRY_DELAYS = [5000, 30000, 120000];
+const MAX_RETRIES = 3;
+
+interface QueueItem {
+  mediaId: string;
+  msg: WAMessage;
+  retryCount: number;
+}
+
 class MediaManager {
   private readonly MAX_QUEUE_SIZE = 5000;
-  private queue: Array<{ mediaId: string; msg: WAMessage }> = [];
+  private queue: QueueItem[] = [];
   private processing = false;
 
   constructor() {
@@ -76,7 +86,7 @@ class MediaManager {
       return;
     }
 
-    this.queue.push({ mediaId, msg });
+    this.queue.push({ mediaId, msg, retryCount: 0 });
     this.processQueue();
   }
 
@@ -90,8 +100,22 @@ class MediaManager {
       try {
         await this.downloadMedia(item.mediaId, item.msg);
       } catch (err) {
-        log.media.error({ err, mediaId: item.mediaId }, 'Failed to download media');
-        mediaRepo.updateStatus(item.mediaId, 'failed', String(err));
+        const newRetryCount = item.retryCount + 1;
+        if (newRetryCount < MAX_RETRIES) {
+          const delay = RETRY_DELAYS[Math.min(newRetryCount - 1, RETRY_DELAYS.length - 1)];
+          log.media.warn({ err, mediaId: item.mediaId, retry: newRetryCount, delayMs: delay }, 'Media download failed, scheduling retry');
+          mediaRepo.updateStatus(item.mediaId, 'pending', `Retry ${newRetryCount}/${MAX_RETRIES}: ${String(err)}`);
+          // Re-queue after delay
+          setTimeout(() => {
+            if (this.queue.length < this.MAX_QUEUE_SIZE) {
+              this.queue.push({ ...item, retryCount: newRetryCount });
+              this.processQueue();
+            }
+          }, delay);
+        } else {
+          log.media.error({ err, mediaId: item.mediaId, attempts: newRetryCount }, 'Media download failed after all retries');
+          mediaRepo.updateStatus(item.mediaId, 'failed', String(err));
+        }
       }
 
       // Small delay between downloads to avoid rate limiting
@@ -142,6 +166,30 @@ class MediaManager {
     });
 
     log.media.info({ path: relativePath, sizeKB: Math.round(buffer.length / 1024) }, 'Downloaded media');
+  }
+
+  /** Manually retry downloading a failed media item by reconstructing from the stored raw_message. */
+  async retryDownload(mediaId: string): Promise<{ success: boolean; error?: string }> {
+    const mediaRow = mediaRepo.getById(mediaId);
+    if (!mediaRow) return { success: false, error: 'Media not found' };
+    if (mediaRow.download_status === 'downloaded') return { success: false, error: 'Media already downloaded' };
+
+    if (!mediaRow.message_id) return { success: false, error: 'No linked message' };
+
+    // Get the raw message from the messages table
+    try {
+      const { messagesRepo } = await import('../database/repositories/messages.js');
+      const msg = messagesRepo.getByIdInternal(mediaRow.message_id);
+      if (!msg?.raw_message) return { success: false, error: 'Raw message not available (may have been stripped)' };
+
+      const waMsg: WAMessage = JSON.parse(msg.raw_message);
+      mediaRepo.updateStatus(mediaId, 'pending');
+      this.queue.push({ mediaId, msg: waMsg, retryCount: 0 });
+      this.processQueue();
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: String(err) };
+    }
   }
 
   getMediaPath(relativePath: string): string {

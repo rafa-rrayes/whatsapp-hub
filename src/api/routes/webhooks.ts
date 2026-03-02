@@ -3,7 +3,8 @@ import { getDb } from '../../database/index.js';
 import { validateUrlForFetch } from '../../utils/security.js';
 import { validate } from '../middleware/validate.js';
 import { webhookCreateSchema } from '../schemas.js';
-import { asyncHandler, BadRequestError } from '../errors.js';
+import { asyncHandler, BadRequestError, NotFoundError } from '../errors.js';
+import { clampPagination } from '../../utils/security.js';
 import { webhookDispatcher } from '../../webhooks/dispatcher.js';
 import { config } from '../../config.js';
 import { v4 as uuid } from 'uuid';
@@ -62,6 +63,42 @@ router.put('/:id/toggle', asyncHandler(async (req, res) => {
   `).run(req.params.id as string);
   webhookDispatcher.invalidateCache();
   res.json({ success: true });
+}));
+
+// GET /api/webhooks/deliveries — query delivery log
+router.get('/deliveries', asyncHandler(async (req, res) => {
+  const db = getDb();
+  const q = req.query;
+  const conditions: string[] = [];
+  const params: Record<string, string | number> = {};
+
+  if (q.subscription_id) {
+    conditions.push('subscription_id = @subscription_id');
+    params.subscription_id = q.subscription_id as string;
+  }
+  if (q.status) {
+    conditions.push('status = @status');
+    params.status = q.status as string;
+  }
+
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  const limit = clampPagination(q.limit, 50, 500);
+  const offset = clampPagination(q.offset, 0, 100000);
+
+  const total = (db.prepare(`SELECT COUNT(*) as c FROM webhook_delivery_log ${where}`).get(params) as { c: number }).c;
+  const data = db.prepare(`SELECT * FROM webhook_delivery_log ${where} ORDER BY created_at DESC LIMIT @limit OFFSET @offset`)
+    .all({ ...params, limit, offset });
+
+  res.json({ data, total });
+}));
+
+// POST /api/webhooks/deliveries/:id/retry — manually retry a failed delivery
+router.post('/deliveries/:id/retry', asyncHandler(async (req, res) => {
+  const result = await webhookDispatcher.retryDelivery(req.params.id as string);
+  if (result.error === 'Delivery not found') {
+    throw new NotFoundError('Delivery not found');
+  }
+  res.json(result);
 }));
 
 export default router;

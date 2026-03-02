@@ -3,6 +3,7 @@ import { chatsRepo } from '../../database/repositories/chats.js';
 import { messagesRepo } from '../../database/repositories/messages.js';
 import { clampPagination, isValidJid } from '../../utils/security.js';
 import { asyncHandler, NotFoundError, BadRequestError } from '../errors.js';
+import { toApiChat, toApiMessage } from '../../types/mappers.js';
 
 const router = Router();
 
@@ -13,7 +14,7 @@ router.get('/', asyncHandler(async (req, res) => {
     limit: clampPagination(req.query.limit, 100, 500),
     offset: clampPagination(req.query.offset, 0, 100000),
   });
-  res.json({ data: chats, total: chats.length });
+  res.json({ data: chats.map(toApiChat), total: chats.length });
 }));
 
 // GET /api/chats/:jid — single chat with recent messages
@@ -30,7 +31,7 @@ router.get('/:jid', asyncHandler(async (req, res) => {
     limit: 20,
     order: 'desc',
   });
-  res.json({ ...chat, recent_messages: recentMessages.data });
+  res.json({ ...toApiChat(chat), recent_messages: recentMessages.data.map(toApiMessage) });
 }));
 
 export default router;

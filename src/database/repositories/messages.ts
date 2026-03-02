@@ -1,5 +1,19 @@
+import type Database from 'better-sqlite3-multiple-ciphers';
 import { getDb } from '../index.js';
 import { config } from '../../config.js';
+
+/** Cache whether FTS5 table exists to avoid per-query overhead. */
+let ftsAvailable: boolean | null = null;
+function hasFts(db: Database.Database): boolean {
+  if (ftsAvailable !== null) return ftsAvailable;
+  try {
+    const result = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='messages_fts'").get();
+    ftsAvailable = !!result;
+  } catch {
+    ftsAvailable = false;
+  }
+  return ftsAvailable;
+}
 
 function stripRawMessage<T extends { raw_message?: string }>(row: T): T {
   if (config.security.stripRawMessages && row) {
@@ -157,37 +171,46 @@ export const messagesRepo = {
     const db = getDb();
     const conditions: string[] = [];
     const params: any = {};
+    let useFts = false;
 
     if (q.remote_jid) {
-      conditions.push('remote_jid = @remote_jid');
+      conditions.push('messages.remote_jid = @remote_jid');
       params.remote_jid = q.remote_jid;
     }
     if (q.from_jid) {
-      conditions.push('(from_jid = @from_jid OR participant = @from_jid)');
+      conditions.push('(messages.from_jid = @from_jid OR messages.participant = @from_jid)');
       params.from_jid = q.from_jid;
     }
     if (q.from_me !== undefined) {
-      conditions.push('from_me = @from_me');
+      conditions.push('messages.from_me = @from_me');
       params.from_me = q.from_me ? 1 : 0;
     }
     if (q.message_type) {
-      conditions.push('message_type = @message_type');
+      conditions.push('messages.message_type = @message_type');
       params.message_type = q.message_type;
     }
     if (q.search) {
-      conditions.push('body LIKE @search');
-      params.search = `%${q.search}%`;
+      // Try FTS5 first, fall back to LIKE if table doesn't exist
+      if (hasFts(db)) {
+        useFts = true;
+        conditions.push('messages.id IN (SELECT id FROM messages_fts WHERE messages_fts MATCH @search)');
+        // Escape FTS5 special characters and wrap in quotes for exact phrase matching
+        params.search = `"${q.search.replace(/"/g, '""')}"`;
+      } else {
+        conditions.push('messages.body LIKE @search');
+        params.search = `%${q.search}%`;
+      }
     }
     if (q.before) {
-      conditions.push('timestamp < @before');
+      conditions.push('messages.timestamp < @before');
       params.before = q.before;
     }
     if (q.after) {
-      conditions.push('timestamp > @after');
+      conditions.push('messages.timestamp > @after');
       params.after = q.after;
     }
     if (q.has_media !== undefined) {
-      conditions.push('has_media = @has_media');
+      conditions.push('messages.has_media = @has_media');
       params.has_media = q.has_media ? 1 : 0;
     }
 
@@ -202,7 +225,7 @@ export const messagesRepo = {
 
     const data = db
       .prepare(
-        `SELECT * FROM messages ${where} ORDER BY timestamp ${order} LIMIT @limit OFFSET @offset`
+        `SELECT messages.* FROM messages ${where} ORDER BY messages.timestamp ${order} LIMIT @limit OFFSET @offset`
       )
       .all({ ...params, limit, offset }) as MessageRow[];
 

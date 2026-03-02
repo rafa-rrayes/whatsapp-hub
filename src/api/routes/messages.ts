@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { messagesRepo } from '../../database/repositories/messages.js';
 import { clampPagination } from '../../utils/security.js';
 import { asyncHandler, NotFoundError, BadRequestError } from '../errors.js';
+import { toApiMessage } from '../../types/mappers.js';
 
 const router = Router();
 
@@ -21,7 +22,7 @@ router.get('/', asyncHandler(async (req, res) => {
     offset: clampPagination(q.offset, 0, 100000),
     order: q.order === 'asc' ? 'asc' : 'desc',
   });
-  res.json(result);
+  res.json({ data: result.data.map(toApiMessage), total: result.total });
 }));
 
 // GET /api/messages/search — full-text search
@@ -36,7 +37,7 @@ router.get('/search', asyncHandler(async (req, res) => {
     limit: clampPagination(req.query.limit, 50, 500),
     offset: clampPagination(req.query.offset, 0, 100000),
   });
-  res.json(result);
+  res.json({ data: result.data.map(toApiMessage), total: result.total });
 }));
 
 // GET /api/messages/stats — message statistics
@@ -50,7 +51,7 @@ router.get('/:id', asyncHandler(async (req, res) => {
   if (!msg) {
     throw new NotFoundError('Message not found');
   }
-  res.json(msg);
+  res.json(toApiMessage(msg));
 }));
 
 export default router;

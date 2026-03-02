@@ -66,8 +66,8 @@ export const config = {
 
   // Security settings — all toggleable, defaults to off (backward-compatible)
   security: {
-    wsTicketAuth: process.env.SECURITY_WS_TICKET_AUTH === 'true',
-    disableHttpQueryAuth: process.env.SECURITY_DISABLE_HTTP_QUERY_AUTH === 'true',
+    wsTicketAuth: process.env.SECURITY_WS_TICKET_AUTH !== 'false',
+    disableHttpQueryAuth: process.env.SECURITY_DISABLE_HTTP_QUERY_AUTH !== 'false',
     stripRawMessages: process.env.SECURITY_STRIP_RAW_MESSAGES === 'true',
     encryptWebhookSecrets: process.env.SECURITY_ENCRYPT_WEBHOOK_SECRETS === 'true',
     encryptDatabase: process.env.SECURITY_ENCRYPT_DATABASE === 'true',

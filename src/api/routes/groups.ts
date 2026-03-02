@@ -6,13 +6,14 @@ import { isValidJid } from '../../utils/security.js';
 import { validate } from '../middleware/validate.js';
 import { groupSubjectSchema, groupDescriptionSchema, groupParticipantsSchema } from '../schemas.js';
 import { asyncHandler, NotFoundError, BadRequestError } from '../errors.js';
+import { toApiGroup } from '../../types/mappers.js';
 
 const router = Router();
 
 // GET /api/groups — list all groups
 router.get('/', asyncHandler(async (req, res) => {
   const groups = groupsRepo.getAll(req.query.search as string);
-  res.json({ data: groups, total: groups.length });
+  res.json({ data: groups.map(toApiGroup), total: groups.length });
 }));
 
 // GET /api/groups/:jid — single group with participants
@@ -25,7 +26,7 @@ router.get('/:jid', asyncHandler(async (req, res) => {
     throw new NotFoundError('Group not found');
   }
   const participants = groupsRepo.getParticipants(req.params.jid as string);
-  res.json({ ...group, participants });
+  res.json({ ...toApiGroup(group), participants });
 }));
 
 // GET /api/groups/:jid/metadata — fetch fresh metadata from WhatsApp

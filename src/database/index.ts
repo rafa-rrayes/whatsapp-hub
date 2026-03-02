@@ -2,6 +2,7 @@ import Database from 'better-sqlite3-multiple-ciphers';
 import crypto from 'crypto';
 import { config } from '../config.js';
 import { applySchema } from './schema.js';
+import { runMigrations } from './migrations/index.js';
 import { migrateWebhookSecrets } from '../utils/encryption.js';
 import { log } from '../utils/logger.js';
 import fs from 'fs';
@@ -125,7 +126,7 @@ export function initDb(): Database.Database {
   db.pragma('busy_timeout = 5000');
   db.pragma('foreign_keys = ON');
 
-  applySchema(db);
+  runMigrations(db);
 
   // Migrate webhook secrets to encrypted form if enabled
   if (config.security.encryptWebhookSecrets && config.security.encryptionKey) {

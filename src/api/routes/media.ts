@@ -4,6 +4,7 @@ import { mediaManager } from '../../media/manager.js';
 import { sanitizeFilename } from '../../utils/security.js';
 import { config } from '../../config.js';
 import { asyncHandler, NotFoundError, ForbiddenError } from '../errors.js';
+import { toApiMedia } from '../../types/mappers.js';
 import fs from 'fs';
 import path from 'path';
 
@@ -20,7 +21,7 @@ router.get('/:id', asyncHandler(async (req, res) => {
   if (!media) {
     throw new NotFoundError('Media not found');
   }
-  res.json(media);
+  res.json(toApiMedia(media));
 }));
 
 // GET /api/media/:id/download — download the actual media file
@@ -58,7 +59,16 @@ router.get('/by-message/:messageId', asyncHandler(async (req, res) => {
   if (!media) {
     throw new NotFoundError('No media for this message');
   }
-  res.json(media);
+  res.json(toApiMedia(media));
+}));
+
+// POST /api/media/:id/retry — manually retry a failed media download
+router.post('/:id/retry', asyncHandler(async (req, res) => {
+  const result = await mediaManager.retryDownload(req.params.id as string);
+  if (result.error === 'Media not found') {
+    throw new NotFoundError('Media not found');
+  }
+  res.json(result);
 }));
 
 export default router;

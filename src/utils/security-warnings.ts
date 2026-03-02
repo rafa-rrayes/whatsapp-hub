@@ -13,18 +13,18 @@ export function printSecurityWarnings(): void {
   if (!config.security.wsTicketAuth) {
     warnings.push({
       level: '!! STRONGLY RECOMMENDED',
-      name: 'WebSocket Ticket Auth',
-      description: 'API key is visible in WebSocket query string (logs, browser history)',
-      envVar: 'SECURITY_WS_TICKET_AUTH=true',
+      name: 'WebSocket Ticket Auth DISABLED',
+      description: 'API key is visible in WebSocket query string (logs, browser history). This was explicitly disabled via SECURITY_WS_TICKET_AUTH=false',
+      envVar: 'Remove SECURITY_WS_TICKET_AUTH=false (defaults to ON)',
     });
   }
 
   if (!config.security.disableHttpQueryAuth) {
     warnings.push({
       level: '!! STRONGLY RECOMMENDED',
-      name: 'Disable HTTP Query Param Auth',
-      description: 'api_key query parameter leaks credentials in server logs',
-      envVar: 'SECURITY_DISABLE_HTTP_QUERY_AUTH=true',
+      name: 'HTTP Query Param Auth ENABLED',
+      description: 'api_key query parameter leaks credentials in server logs. This was explicitly enabled via SECURITY_DISABLE_HTTP_QUERY_AUTH=false',
+      envVar: 'Remove SECURITY_DISABLE_HTTP_QUERY_AUTH=false (defaults to ON)',
     });
   }
 
