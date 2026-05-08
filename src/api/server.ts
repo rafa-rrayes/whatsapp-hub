@@ -21,6 +21,7 @@ import settingsRouter from './routes/settings.js';
 import wsTicketRouter from './routes/ws-ticket.js';
 import { secFetchMiddleware } from './middleware/sec-fetch.js';
 import { generateOpenApiSpec } from './openapi.js';
+import { generateOpenApiMarkdown } from './openapi-md.js';
 import { deprecationMiddleware } from './middleware/deprecation.js';
 
 /**
@@ -166,6 +167,18 @@ export function createServer() {
     res.json(generateOpenApiSpec());
   });
 
+  // OpenAPI spec rendered as Markdown (no auth required)
+  const sendOpenApiMarkdown = (req: express.Request, res: express.Response) => {
+    const md = generateOpenApiMarkdown();
+    res.type('text/markdown; charset=utf-8');
+    if (req.query.download !== undefined) {
+      res.setHeader('Content-Disposition', 'attachment; filename="whatsapp-hub-api.md"');
+    }
+    res.send(md);
+  };
+  app.get('/api/openapi.md', sendOpenApiMarkdown);
+  app.get('/api/v1/openapi.md', sendOpenApiMarkdown);
+
   // Auth middleware for /api and /api/v1 routes
   app.use('/api/v1', authMiddleware);
   app.use('/api', authMiddleware);
@@ -299,6 +312,7 @@ export function createServer() {
         },
         docs: {
           'GET /api/openapi.json': 'OpenAPI 3.1 specification (no auth required)',
+          'GET /api/openapi.md': 'API reference rendered as Markdown (append ?download=1 for file download)',
         },
       },
       versioning: {

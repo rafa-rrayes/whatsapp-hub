@@ -376,6 +376,19 @@ export function generateOpenApiSpec(): object {
       '/openapi.json': {
         get: { summary: 'OpenAPI specification', tags: ['System'], security: [], responses: { '200': ok } },
       },
+      '/openapi.md': {
+        get: {
+          summary: 'OpenAPI specification rendered as Markdown',
+          tags: ['System'],
+          security: [],
+          parameters: [
+            { name: 'download', in: 'query', schema: { type: 'string' }, description: 'If present, sets Content-Disposition for file download' },
+          ],
+          responses: {
+            '200': { description: 'Markdown document', content: { 'text/markdown': { schema: { type: 'string' } } } },
+          },
+        },
+      },
     },
   };
 }

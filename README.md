@@ -80,7 +80,7 @@ curl -X POST -H "x-api-key: YOUR_KEY" -H "Content-Type: application/json" \
 
 ## API Reference
 
-Interactive API docs are available in the dashboard at `GET /api`.
+Interactive API docs are available in the dashboard at `GET /api`. The full spec is also exposed as JSON at `GET /api/openapi.json` and as Markdown at `GET /api/openapi.md` (append `?download=1` to download as a file).
 
 ### Authentication
 

@@ -24,7 +24,9 @@ import {
   Heart,
   Shield,
   BookOpen,
+  Download,
 } from "lucide-react"
+import { Button } from "@/components/ui/button"
 
 // ---------------------------------------------------------------------------
 // Types
@@ -1083,14 +1085,30 @@ export function ApiDocsPage() {
               Complete reference for the WhatsApp Hub REST API &middot; {totalEndpoints} endpoints
             </p>
           </div>
-          <div className="relative w-64 shrink-0">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/50" />
-            <Input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search endpoints..."
-              className="h-8 pl-8 text-sm"
-            />
+          <div className="flex items-center gap-2 shrink-0">
+            <Button
+              asChild
+              variant="outline"
+              size="sm"
+              className="h-8 text-xs gap-1.5"
+            >
+              <a
+                href="/api/openapi.md?download=1"
+                download="whatsapp-hub-api.md"
+              >
+                <Download className="h-3.5 w-3.5" />
+                Download .md
+              </a>
+            </Button>
+            <div className="relative w-64">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/50" />
+              <Input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search endpoints..."
+                className="h-8 pl-8 text-sm"
+              />
+            </div>
           </div>
         </div>
 
