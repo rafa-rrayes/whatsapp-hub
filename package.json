@@ -36,6 +36,7 @@
   "dependencies": {
     "@hapi/boom": "^10.0.1",
     "@whiskeysockets/baileys": "^7.0.0-rc.9",
+    "archiver": "^7.0.1",
     "better-sqlite3-multiple-ciphers": "^11.7.0",
     "content-disposition": "^1.0.1",
     "dotenv": "^16.4.7",
@@ -52,6 +53,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@types/archiver": "^7.0.0",
     "@types/better-sqlite3": "^7.6.12",
     "@types/content-disposition": "^0.5.9",
     "@types/express": "^5.0.0",

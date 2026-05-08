@@ -17,6 +17,7 @@ import {
   groupSubjectSchema,
   groupDescriptionSchema,
   groupParticipantsSchema,
+  exportRequestSchema,
 } from './schemas.js';
 
 function toJsonSchema(schema: z.ZodType): object {
@@ -372,6 +373,65 @@ export function generateOpenApiSpec(): object {
       },
       '/ws/ticket': {
         post: { summary: 'Get one-time WebSocket ticket', tags: ['WebSocket'], responses: { '200': ok, '401': unauthorized } },
+      },
+      '/export': {
+        post: {
+          summary: 'Export conversations as Markdown / txt / json / zip',
+          description: 'Single richly-parameterised endpoint for exporting messages with filters (time window, chats, message types, media handling, privacy). See requestBody schema for all options.',
+          tags: ['Export'],
+          requestBody: jsonBody(exportRequestSchema),
+          responses: {
+            '200': {
+              description: 'Export file (markdown by default; format determined by request body)',
+              content: {
+                'text/markdown': { schema: { type: 'string' } },
+                'text/plain': { schema: { type: 'string' } },
+                'application/json': { schema: { type: 'object' } },
+                'application/zip': { schema: { type: 'string', format: 'binary' } },
+              },
+            },
+            '400': badRequest,
+            '401': unauthorized,
+            '429': { description: 'Too many export requests (limit 5/min/key)' },
+          },
+        },
+        get: {
+          summary: 'Export convenience GET (trivial exports only)',
+          description: 'Query-string variant for simple exports; use POST for full options.',
+          tags: ['Export'],
+          parameters: [
+            { name: 'days', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 365 } },
+            { name: 'from', in: 'query', schema: { oneOf: [{ type: 'integer' }, { type: 'string', format: 'date-time' }] } },
+            { name: 'to', in: 'query', schema: { oneOf: [{ type: 'integer' }, { type: 'string', format: 'date-time' }] } },
+            { name: 'format', in: 'query', schema: { type: 'string', enum: ['md', 'txt', 'json', 'zip'], default: 'md' } },
+            { name: 'preset', in: 'query', schema: { type: 'string', enum: ['concise', 'full', 'llm', 'archive'], default: 'full' } },
+            { name: 'timezone', in: 'query', schema: { type: 'string', default: 'UTC' } },
+            { name: 'media', in: 'query', schema: { type: 'string', enum: ['none', 'ref', 'embed', 'attach'], default: 'none' } },
+            { name: 'reactions', in: 'query', schema: { type: 'string', enum: ['inline', 'separate', 'omit'], default: 'inline' } },
+            { name: 'date_grouping', in: 'query', schema: { type: 'string', enum: ['none', 'day', 'hour'], default: 'day' } },
+            { name: 'sort_chats_by', in: 'query', schema: { type: 'string', enum: ['recent', 'volume', 'name'], default: 'recent' } },
+            { name: 'groups_only', in: 'query', schema: { type: 'string', enum: ['true', 'false'] } },
+            { name: 'dms_only', in: 'query', schema: { type: 'string', enum: ['true', 'false'] } },
+            { name: 'has_media', in: 'query', schema: { type: 'string', enum: ['true', 'false'] } },
+            { name: 'from_me', in: 'query', schema: { type: 'string', enum: ['true', 'false'] } },
+            { name: 'search', in: 'query', schema: { type: 'string' } },
+            { name: 'me_alias', in: 'query', schema: { type: 'string', default: 'Me' } },
+          ],
+          responses: {
+            '200': {
+              description: 'Export file (markdown by default)',
+              content: {
+                'text/markdown': { schema: { type: 'string' } },
+                'text/plain': { schema: { type: 'string' } },
+                'application/json': { schema: { type: 'object' } },
+                'application/zip': { schema: { type: 'string', format: 'binary' } },
+              },
+            },
+            '400': badRequest,
+            '401': unauthorized,
+            '429': { description: 'Too many export requests' },
+          },
+        },
       },
       '/openapi.json': {
         get: { summary: 'OpenAPI specification', tags: ['System'], security: [], responses: { '200': ok } },

@@ -12,6 +12,7 @@ import {
   settingsUpdateSchema,
   groupSubjectSchema,
   groupParticipantsSchema,
+  exportRequestSchema,
 } from './schemas.js';
 
 describe('sendTextSchema', () => {
@@ -285,5 +286,107 @@ describe('groupParticipantsSchema', () => {
       action: 'add',
     });
     expect(result.success).toBe(false);
+  });
+});
+
+describe('exportRequestSchema', () => {
+  it('accepts a minimal valid request with `days`', () => {
+    const result = exportRequestSchema.safeParse({ days: 7 });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.format).toBe('md');
+      expect(result.data.preset).toBe('full');
+      expect(result.data.media).toBe('none');
+      expect(result.data.reactions).toBe('inline');
+      expect(result.data.timezone).toBe('UTC');
+    }
+  });
+
+  it('accepts an absolute time window with unix timestamps', () => {
+    const result = exportRequestSchema.safeParse({ from: 1_700_000_000, to: 1_700_864_000 });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts an ISO datetime string for from/to', () => {
+    const result = exportRequestSchema.safeParse({
+      from: '2026-04-23T00:00:00Z',
+      to: '2026-05-08T00:00:00Z',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects when neither from/to nor days is provided', () => {
+    const result = exportRequestSchema.safeParse({ format: 'md' });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects when to is before from', () => {
+    const result = exportRequestSchema.safeParse({ from: 2_000, to: 1_000 });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects mutually exclusive groups_only + dms_only', () => {
+    const result = exportRequestSchema.safeParse({
+      days: 7,
+      groups_only: true,
+      dms_only: true,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects format=zip without media=attach', () => {
+    const result = exportRequestSchema.safeParse({ days: 7, format: 'zip' });
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts format=zip with media=attach', () => {
+    const result = exportRequestSchema.safeParse({ days: 7, format: 'zip', media: 'attach' });
+    expect(result.success).toBe(true);
+  });
+
+  it('validates jid format inside chats array', () => {
+    const result = exportRequestSchema.safeParse({
+      days: 7,
+      chats: ['not-a-jid'],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('clamps days to 1..365', () => {
+    expect(exportRequestSchema.safeParse({ days: 0 }).success).toBe(false);
+    expect(exportRequestSchema.safeParse({ days: 366 }).success).toBe(false);
+    expect(exportRequestSchema.safeParse({ days: 365 }).success).toBe(true);
+  });
+
+  it('clamps max_messages to <= 200_000', () => {
+    expect(exportRequestSchema.safeParse({ days: 7, max_messages: 200_001 }).success).toBe(false);
+    expect(exportRequestSchema.safeParse({ days: 7, max_messages: 200_000 }).success).toBe(true);
+  });
+
+  it('default exclude_types filters reactions and poll_updates', () => {
+    const result = exportRequestSchema.safeParse({ days: 7 });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.exclude_types).toEqual(['reaction', 'poll_update']);
+    }
+  });
+
+  it('accepts allowed format/preset/media/reactions enums', () => {
+    for (const format of ['md', 'txt', 'json'] as const) {
+      expect(exportRequestSchema.safeParse({ days: 1, format }).success).toBe(true);
+    }
+    for (const preset of ['concise', 'full', 'llm', 'archive'] as const) {
+      expect(exportRequestSchema.safeParse({ days: 1, preset }).success).toBe(true);
+    }
+    for (const media of ['none', 'ref', 'embed'] as const) {
+      expect(exportRequestSchema.safeParse({ days: 1, media }).success).toBe(true);
+    }
+    for (const reactions of ['inline', 'separate', 'omit'] as const) {
+      expect(exportRequestSchema.safeParse({ days: 1, reactions }).success).toBe(true);
+    }
+  });
+
+  it('rejects max_chats > 500', () => {
+    expect(exportRequestSchema.safeParse({ days: 1, max_chats: 501 }).success).toBe(false);
   });
 });

@@ -19,6 +19,7 @@ import webhooksRouter from './routes/webhooks.js';
 import statsRouter from './routes/stats.js';
 import settingsRouter from './routes/settings.js';
 import wsTicketRouter from './routes/ws-ticket.js';
+import exportRouter from './routes/export.js';
 import { secFetchMiddleware } from './middleware/sec-fetch.js';
 import { generateOpenApiSpec } from './openapi.js';
 import { generateOpenApiMarkdown } from './openapi-md.js';
@@ -199,6 +200,18 @@ export function createServer() {
   app.use('/api/connection', actionLimiter);
   app.use('/api/v1/connection', actionLimiter);
 
+  // Export endpoint is heavy — give it its own (tighter) limit.
+  const exportLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 5,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many export requests — exports are heavy. Please slow down.' },
+    keyGenerator: (req) => (req.headers['x-api-key'] as string) || req.ip || 'unknown',
+  });
+  app.use('/api/export', exportLimiter);
+  app.use('/api/v1/export', exportLimiter);
+
   // Higher body limit only for action routes that accept base64 media
   const mediaBodyParser = express.json({ limit: '15mb' });
   const mediaPaths = ['image', 'document', 'audio', 'video', 'sticker'];
@@ -223,6 +236,7 @@ export function createServer() {
     ['/webhooks', webhooksRouter],
     ['/stats', statsRouter],
     ['/settings', settingsRouter],
+    ['/export', exportRouter],
   ];
 
   for (const [path, router] of routes) {
@@ -305,6 +319,10 @@ export function createServer() {
         settings: {
           'GET /api/settings': 'List runtime settings with defaults',
           'PUT /api/settings': 'Update runtime settings { logLevel?, autoDownloadMedia?, maxMediaSizeMB? }',
+        },
+        export: {
+          'POST /api/export': 'Export conversations as Markdown / txt / json / zip with rich filters (time window, chat selection, media handling, privacy)',
+          'GET /api/export?days=N&format=md': 'Convenience GET for trivial exports — POST is preferred for full options',
         },
         websocket: {
           'POST /api/ws/ticket': 'Get a one-time WebSocket ticket (requires SECURITY_WS_TICKET_AUTH=true)',

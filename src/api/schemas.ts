@@ -108,3 +108,89 @@ export const groupParticipantsSchema = z.object({
   ).min(1, 'participants must not be empty'),
   action: z.enum(['add', 'remove', 'promote', 'demote']),
 });
+
+// ── Export endpoint ─────────────────────────────────────────────────────────
+//
+// Single, richly-parameterised endpoint that produces a Markdown export
+// (and zip, txt, json variants) of conversations from the local SQLite store.
+// See tasks/todo.md for the design and rationale.
+
+const timeInput = z.union([z.number().int(), z.string().datetime()]);
+
+const messageField = z.enum([
+  'timestamp', 'sender', 'body', 'media', 'reply', 'reactions',
+  'id', 'edits', 'forwarded', 'starred',
+]);
+
+export const exportRequestSchema = z.object({
+  // Time window — provide {from, to} OR `days`. If both, {from, to} wins.
+  from: timeInput.optional(),
+  to: timeInput.optional(),
+  days: z.number().int().min(1).max(365).optional(),
+
+  // Chat selection
+  chats: z.array(z.string().regex(JID_REGEX, 'Invalid JID format')).max(500).optional(),
+  exclude_chats: z.array(z.string().regex(JID_REGEX, 'Invalid JID format')).max(500).optional(),
+  groups_only: z.boolean().optional(),
+  dms_only: z.boolean().optional(),
+  include_archived: z.boolean().default(false),
+  include_muted: z.boolean().default(true),
+  unread_only: z.boolean().default(false),
+  min_messages: z.number().int().min(0).default(0),
+  chat_search: z.string().optional(),
+  sort_chats_by: z.enum(['recent', 'volume', 'name']).default('recent'),
+
+  // Message selection
+  types: z.array(z.string()).optional(),
+  exclude_types: z.array(z.string()).default(['reaction', 'poll_update']),
+  has_media: z.boolean().optional(),
+  from_me: z.boolean().optional(),
+  include_deleted: z.boolean().default(false),
+  include_system: z.boolean().default(false),
+  min_body_length: z.number().int().min(0).default(0),
+  search: z.string().optional(),
+
+  // Rendering
+  format: z.enum(['md', 'txt', 'json', 'zip']).default('md'),
+  preset: z.enum(['concise', 'full', 'llm', 'archive']).default('full'),
+  fields: z.array(messageField).optional(),
+
+  // Time / locale
+  timezone: z.string().default('UTC'),
+  time_format: z.enum(['absolute', 'relative', 'both']).default('absolute'),
+  date_grouping: z.enum(['none', 'day', 'hour']).default('day'),
+
+  // Reactions
+  reactions: z.enum(['inline', 'separate', 'omit']).default('inline'),
+
+  // Names
+  me_alias: z.string().default('Me'),
+  prefer_saved_names: z.boolean().default(true),
+
+  // Media handling
+  media: z.enum(['none', 'ref', 'embed', 'attach']).default('none'),
+  media_types: z.array(z.enum(['image', 'video', 'audio', 'sticker', 'document'])).optional(),
+  max_media_size_mb: z.number().int().min(0).default(50),
+  include_thumbnails: z.boolean().default(false),
+
+  // Privacy
+  redact_phone_numbers: z.boolean().default(false),
+  anonymize_jids: z.boolean().default(false),
+  strip_quoted_bodies: z.boolean().default(false),
+
+  // Caps (callers can lower; server clamps upper bound)
+  max_messages: z.number().int().min(1).max(200_000).default(100_000),
+  max_chats: z.number().int().min(1).max(500).default(500),
+})
+  .refine((d) => !(d.groups_only && d.dms_only), { message: 'groups_only and dms_only are mutually exclusive' })
+  .refine((d) => {
+    const f = typeof d.from === 'string' ? Date.parse(d.from) / 1000 : d.from;
+    const t = typeof d.to === 'string' ? Date.parse(d.to) / 1000 : d.to;
+    return !(f !== undefined && t !== undefined && t <= f);
+  }, { message: 'to must be after from' })
+  .refine((d) => d.from !== undefined || d.to !== undefined || d.days !== undefined,
+    { message: 'must specify a time window: from/to or days' })
+  .refine((d) => !(d.format === 'zip' && d.media !== 'attach'),
+    { message: 'format=zip requires media=attach' });
+
+export type ExportRequest = z.infer<typeof exportRequestSchema>;

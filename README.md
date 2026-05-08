@@ -256,6 +256,76 @@ Optional event filter: `?ticket=TOKEN&events=wa.messages.upsert,wa.presence.upda
 
 </details>
 
+<details>
+<summary><strong>Export</strong></summary>
+
+A single richly-parameterised endpoint that produces a curated **Markdown** export of conversations (also `txt`, `json`, or a `zip` bundling media). Useful for archives, LLM context, and human-friendly dumps. Rate-limited to 5/min/key.
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/export` | Full-featured export with rich filters (time window, chat selection, media handling, privacy) |
+| GET | `/api/export?days=N&format=md` | Convenience GET for trivial exports — POST is preferred for full options |
+
+**Body fields (all optional unless noted; one of `days` / `from` / `to` is required):**
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `days` | int 1–365 | — | Last N days ending now |
+| `from` / `to` | unix int or ISO datetime | — | Absolute window |
+| `chats` | string[] of JIDs | — | Only include these chats |
+| `exclude_chats` | string[] of JIDs | — | Skip these chats |
+| `groups_only` / `dms_only` | bool | false | Mutually exclusive |
+| `include_archived` | bool | `false` | |
+| `include_muted` | bool | `true` | |
+| `unread_only` | bool | `false` | |
+| `min_messages` | int | `0` | Drop chats with fewer than N messages in window |
+| `chat_search` | string | — | Substring match on chat name |
+| `sort_chats_by` | `recent` / `volume` / `name` | `recent` | |
+| `types` / `exclude_types` | string[] | exclude `['reaction','poll_update']` | Message-type filters |
+| `has_media` / `from_me` | bool | — | |
+| `include_deleted` / `include_system` | bool | `false` | |
+| `min_body_length` | int | `0` | Drop messages shorter than N characters |
+| `search` | string | — | Substring search on body |
+| `format` | `md` / `txt` / `json` / `zip` | `md` | `zip` requires `media: 'attach'` |
+| `preset` | `concise` / `full` / `llm` / `archive` | `full` | Selects which fields to render |
+| `fields` | string[] | — | Override preset; valid: `timestamp, sender, body, media, reply, reactions, id, edits, forwarded, starred` |
+| `timezone` | IANA TZ string | `UTC` | E.g. `America/Sao_Paulo` |
+| `date_grouping` | `none` / `day` / `hour` | `day` | Subheadings within each chat |
+| `reactions` | `inline` / `separate` / `omit` | `inline` | |
+| `me_alias` | string | `Me` | Label for messages you sent |
+| `prefer_saved_names` | bool | `true` | Use saved contact name over WhatsApp push name |
+| `media` | `none` / `ref` / `embed` / `attach` | `none` | `attach` requires `format=zip` |
+| `media_types` | string[] | — | Filter to a subset of `image,video,audio,sticker,document` |
+| `max_media_size_mb` | int | `50` | Skip files larger than this (per-file) |
+| `redact_phone_numbers` | bool | `false` | Replace digits with `•` in message bodies |
+| `anonymize_jids` | bool | `false` | Hash sender JIDs (privacy) |
+| `strip_quoted_bodies` | bool | `false` | Drop quoted-message bodies (keep marker) |
+| `max_messages` | int ≤ 200 000 | `100 000` | Hard cap on total messages |
+| `max_chats` | int ≤ 500 | `500` | Hard cap on number of chats |
+
+**Response:** the requested format with `Content-Disposition: attachment; filename="whatsapp-export-YYYYMMDD-HHMM.<ext>"`.
+
+**Examples:**
+
+```bash
+# Last 15 days as Markdown, in São Paulo time
+curl -X POST -H "x-api-key: $KEY" -H "Content-Type: application/json" \
+  -d '{"days": 15, "format": "md", "preset": "full", "timezone": "America/Sao_Paulo"}' \
+  http://localhost:3100/api/export -o export.md
+
+# Pick specific chats with media bundled in a zip
+curl -X POST -H "x-api-key: $KEY" -H "Content-Type: application/json" \
+  -d '{"days": 30, "chats": ["111@s.whatsapp.net"], "format": "zip", "media": "attach"}' \
+  http://localhost:3100/api/export -o export.zip
+
+# Privacy-friendly LLM-ready export
+curl -X POST -H "x-api-key: $KEY" -H "Content-Type: application/json" \
+  -d '{"days": 7, "preset": "llm", "anonymize_jids": true, "redact_phone_numbers": true}' \
+  http://localhost:3100/api/export -o export.md
+```
+
+</details>
+
 ## What Gets Stored
 
 | Category | Details |
