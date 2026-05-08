@@ -655,6 +655,101 @@ const API_SECTIONS: EndpointGroup[] = [
     ],
   },
   {
+    id: "export",
+    title: "Export",
+    description: "Export conversations as Markdown, plain text, JSON, or a Zip bundle (with media). Highly configurable: filter by chat/time/type, control rendering, redact phone numbers, anonymize JIDs, embed media inline, and more. Rate limited to 5 requests/minute.",
+    prefix: "/api/export",
+    endpoints: [
+      {
+        method: "POST",
+        path: "/api/export",
+        description: "Generate an export by passing a JSON body with all options. Response is the rendered file (text/markdown, text/plain, application/json, or application/zip) streamed with a Content-Disposition attachment header.",
+        body: [
+          { name: "days", type: "number", description: "Window: last N days (1-365). Mutually exclusive with from/to.", default: "30" },
+          { name: "from", type: "number | string", description: "Window start as unix seconds or ISO datetime" },
+          { name: "to", type: "number | string", description: "Window end as unix seconds or ISO datetime" },
+          { name: "chats", type: "string[]", description: "Allowlist of chat JIDs to include" },
+          { name: "exclude_chats", type: "string[]", description: "Blocklist of chat JIDs to exclude" },
+          { name: "groups_only", type: "boolean", description: "Only include group chats. Mutually exclusive with dms_only." },
+          { name: "dms_only", type: "boolean", description: "Only include 1:1 chats. Mutually exclusive with groups_only." },
+          { name: "include_archived", type: "boolean", description: "Include archived chats", default: "false" },
+          { name: "include_muted", type: "boolean", description: "Include muted chats", default: "true" },
+          { name: "unread_only", type: "boolean", description: "Only chats with unread messages", default: "false" },
+          { name: "min_messages", type: "number", description: "Skip chats with fewer than N messages in window", default: "0" },
+          { name: "sort_chats_by", type: "string", description: "recent | volume | name", default: "recent" },
+          { name: "max_chats", type: "number", description: "Cap on number of chats (≤500)", default: "500" },
+          { name: "max_messages", type: "number", description: "Cap on total messages (≤200000)", default: "100000" },
+          { name: "types", type: "string[]", description: "Allowlist of message types (text, image, video, etc.)" },
+          { name: "exclude_types", type: "string[]", description: "Excluded message types", default: '["reaction","poll_update"]' },
+          { name: "include_deleted", type: "boolean", description: "Include deleted messages", default: "false" },
+          { name: "include_system", type: "boolean", description: "Include protocol/sync messages", default: "false" },
+          { name: "min_body_length", type: "number", description: "Skip messages whose body is shorter than this", default: "0" },
+          { name: "from_me", type: "boolean", description: "Filter to only sent or only received" },
+          { name: "has_media", type: "boolean", description: "Filter to only messages that carry media" },
+          { name: "search", type: "string", description: "LIKE search across message body" },
+          { name: "format", type: "string", description: "md | txt | json | zip", default: "md" },
+          { name: "preset", type: "string", description: "concise | full | llm | archive — controls which fields are rendered", default: "full" },
+          { name: "timezone", type: "string", description: "IANA timezone (e.g. America/Sao_Paulo) for timestamps", default: "UTC" },
+          { name: "time_format", type: "string", description: "absolute | relative | both", default: "absolute" },
+          { name: "date_grouping", type: "string", description: "none | day | hour", default: "day" },
+          { name: "reactions", type: "string", description: "inline | separate | omit", default: "inline" },
+          { name: "me_alias", type: "string", description: "Label for messages you sent", default: "Me" },
+          { name: "prefer_saved_names", type: "boolean", description: "Prefer contact-saved names over push names", default: "true" },
+          { name: "media", type: "string", description: "none | ref | embed | attach. zip format requires attach.", default: "none" },
+          { name: "max_media_size_mb", type: "number", description: "Skip media larger than this when attaching/embedding", default: "50" },
+          { name: "include_thumbnails", type: "boolean", description: "Include image thumbnails inline", default: "false" },
+          { name: "redact_phone_numbers", type: "boolean", description: "Replace phone digits in message bodies with •", default: "false" },
+          { name: "anonymize_jids", type: "boolean", description: "Hash JIDs to opaque IDs throughout the output", default: "false" },
+          { name: "strip_quoted_bodies", type: "boolean", description: "Drop quoted-reply bodies (privacy)", default: "false" },
+        ],
+        response: `[markdown / text / json / zip stream]
+Content-Type: text/markdown; charset=utf-8
+Content-Disposition: attachment; filename="whatsapp-export-20260508-1843.md"
+
+---
+generated_at: 2026-05-08T18:43:00.000Z
+window: { from: 1746576000, to: 1746662400 }
+chats_included: 12
+messages_included: 1834
+---
+
+# WhatsApp Export
+...`,
+        curl: `curl -X POST -H "x-api-key: YOUR_KEY" -H "Content-Type: application/json" \\
+  -d '{"days":7,"format":"md","preset":"full","timezone":"America/Sao_Paulo"}' \\
+  http://localhost:3100/api/export -o export.md`,
+        notes: "Rate limited to 5 requests per minute per API key. Sync streaming with a 100k message and 500 chat hard cap. For large exports prefer format=zip with media=attach.",
+      },
+      {
+        method: "GET",
+        path: "/api/export",
+        description: "Convenience GET form. Same parameters as POST, but passed as URL query parameters. Useful for browser downloads and sharing links. Note that array parameters (chats, exclude_chats, types, exclude_types) accept comma-separated values.",
+        params: [
+          { name: "days", type: "number", description: "Window: last N days", default: "30" },
+          { name: "from", type: "number | string", description: "Window start (unix or ISO)" },
+          { name: "to", type: "number | string", description: "Window end (unix or ISO)" },
+          { name: "format", type: "string", description: "md | txt | json | zip", default: "md" },
+          { name: "preset", type: "string", description: "concise | full | llm | archive", default: "full" },
+          { name: "timezone", type: "string", description: "IANA timezone", default: "UTC" },
+          { name: "media", type: "string", description: "none | ref | embed | attach", default: "none" },
+          { name: "chats", type: "string", description: "Comma-separated chat JID allowlist" },
+          { name: "exclude_chats", type: "string", description: "Comma-separated chat JID blocklist" },
+          { name: "types", type: "string", description: "Comma-separated message-type allowlist" },
+          { name: "exclude_types", type: "string", description: "Comma-separated message-type blocklist" },
+          { name: "groups_only", type: "boolean", description: "Only group chats" },
+          { name: "dms_only", type: "boolean", description: "Only 1:1 chats" },
+          { name: "include_archived", type: "boolean", description: "Include archived chats" },
+          { name: "redact_phone_numbers", type: "boolean", description: "Replace phone digits with •" },
+          { name: "anonymize_jids", type: "boolean", description: "Hash JIDs throughout output" },
+        ],
+        notes: "All POST body fields are accepted as query parameters. See POST for full list.",
+        curl: `curl -H "x-api-key: YOUR_KEY" \\
+  "http://localhost:3100/api/export?days=7&format=md&timezone=America/Sao_Paulo&groups_only=true" \\
+  -o groups-export.md`,
+      },
+    ],
+  },
+  {
     id: "webhooks",
     title: "Webhooks",
     description: "Manage webhook subscriptions for real-time event delivery over HTTP.",
