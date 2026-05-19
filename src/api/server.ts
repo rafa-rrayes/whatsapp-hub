@@ -1,7 +1,7 @@
 import express from 'express';
 import path from 'path';
 import helmet from 'helmet';
-import rateLimit from 'express-rate-limit';
+import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import { config } from '../config.js';
 import { authMiddleware } from './middleware/auth.js';
 import { setupWebSocket } from '../websocket/server.js';
@@ -25,6 +25,9 @@ import { generateOpenApiSpec } from './openapi.js';
 import { generateOpenApiMarkdown } from './openapi-md.js';
 import { deprecationMiddleware } from './middleware/deprecation.js';
 import { registerMcp } from '../mcp/index.js';
+import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js';
+import { provider, preAuthClient } from '../mcp/oauth/provider.js';
+import { createConsentRouter } from '../mcp/oauth/consent.js';
 
 /**
  * Returns true if `origin` is a loopback or RFC-1918 private address on the given port.
@@ -137,15 +140,43 @@ export function createServer() {
     next();
   });
 
-  // Global rate limiter (keyed per API key for fair sharing)
+  // Global rate limiter (keyed per OAuth client / API key / IP)
   app.use(rateLimit({
     windowMs: 60 * 1000,  // 1 minute
     max: 200,             // 200 requests per minute
     standardHeaders: true,
     legacyHeaders: false,
     message: { error: 'Too many requests, please try again later.' },
-    keyGenerator: (req) => (req.headers['x-api-key'] as string) || req.ip || 'unknown',
+    keyGenerator: (req) =>
+      req.auth?.clientId
+      || (req.headers['x-api-key'] as string)
+      || ipKeyGenerator(req.ip ?? '')
+      || 'unknown',
   }));
+
+  // OAuth 2.1 endpoints (claude.ai-style connectors). Must mount at root so
+  // `/.well-known/oauth-authorization-server` and `/.well-known/oauth-protected-resource/mcp`
+  // resolve. preAuthClient runs FIRST on /token and /revoke and verifies the
+  // client_secret against the stored SHA-256 hash; the SDK's getClient() then
+  // returns client_secret: undefined and the SDK's plaintext compare is a no-op.
+  try {
+    app.use('/token', preAuthClient);
+    app.use('/revoke', preAuthClient);
+    app.use(mcpAuthRouter({
+      provider,
+      issuerUrl: new URL(config.publicBaseUrl),
+      baseUrl: new URL(config.publicBaseUrl),
+      resourceServerUrl: new URL('/mcp', config.publicBaseUrl),
+      scopesSupported: ['mcp'],
+      resourceName: 'WhatsApp Hub MCP',
+    }));
+    app.use('/oauth', createConsentRouter());
+  } catch (err) {
+    // mcpAuthRouter throws synchronously on HTTPS-issuer violation.
+    // config.ts already pushed an error in this case — re-log so the startup
+    // log surfaces both diagnostics.
+    log.api.error({ err }, 'Failed to mount OAuth router');
+  }
 
   // Serve static dashboard (no auth — dashboard handles its own API key)
   app.use(express.static(path.join(process.cwd(), 'public')));
@@ -208,7 +239,7 @@ export function createServer() {
     standardHeaders: true,
     legacyHeaders: false,
     message: { error: 'Too many export requests — exports are heavy. Please slow down.' },
-    keyGenerator: (req) => (req.headers['x-api-key'] as string) || req.ip || 'unknown',
+    keyGenerator: (req) => (req.headers['x-api-key'] as string) || ipKeyGenerator(req.ip ?? '') || 'unknown',
   });
   app.use('/api/export', exportLimiter);
   app.use('/api/v1/export', exportLimiter);

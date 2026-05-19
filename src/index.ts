@@ -9,6 +9,7 @@ import { loadJidAliases, migrateExistingJids } from './utils/jid.js';
 import { initSettings } from './settings.js';
 import { printSecurityWarnings } from './utils/security-warnings.js';
 import { startAutoPrune, stopAutoPrune } from './utils/auto-prune.js';
+import { pruneOAuthState } from './mcp/oauth/store.js';
 import { log } from './utils/logger.js';
 import { startErrorServer } from './error-server.js';
 
@@ -28,6 +29,11 @@ async function main() {
 
   // 1a-2. Start auto-pruning if enabled
   startAutoPrune();
+
+  // 1a-3. OAuth state sweep — drops unused DCR registrations + expired auth codes/consents.
+  pruneOAuthState();
+  const oauthPruneTimer = setInterval(pruneOAuthState, 6 * 60 * 60 * 1000);
+  oauthPruneTimer.unref();
 
   // 1b. Load JID aliases and migrate existing LID data
   log.boot.info('Loading JID aliases...');

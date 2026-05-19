@@ -10,11 +10,13 @@ export interface Migration {
 import { migration as baseline } from './001-baseline.js';
 import { migration as webhookDeliveryLog } from './002-webhook-delivery-log.js';
 import { migration as fts5Search } from './003-fts5-search.js';
+import { migration as oauth } from './004-oauth.js';
 
 const migrations: Migration[] = [
   baseline,
   webhookDeliveryLog,
   fts5Search,
+  oauth,
 ];
 
 /**

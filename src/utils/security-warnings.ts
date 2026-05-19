@@ -91,6 +91,22 @@ export function printSecurityWarnings(): void {
     });
   }
 
+  if (!config.mcpOauthPassword) {
+    warnings.push({
+      level: '-- RECOMMENDED',
+      name: 'MCP OAuth Password Not Set',
+      description: 'claude.ai-style MCP connectors cannot authorize until MCP_OAUTH_PASSWORD is configured',
+      envVar: 'MCP_OAUTH_PASSWORD=<strong-password> (keep different from API_KEY)',
+    });
+  } else if (config.mcpOauthPassword === config.apiKey) {
+    warnings.push({
+      level: '!! STRONGLY RECOMMENDED',
+      name: 'MCP OAuth Password Equals API Key',
+      description: 'A leak on the consent screen would compromise REST API access too',
+      envVar: 'MCP_OAUTH_PASSWORD=<separate-strong-password>',
+    });
+  }
+
   if (warnings.length === 0) return;
 
   const sep = '='.repeat(68);

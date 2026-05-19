@@ -32,10 +32,18 @@ if (!rawApiKey || isInsecureDefaultKey(rawApiKey)) {
   rawApiKey = 'invalid-placeholder';
 }
 
+const rawPort = parseInt(process.env.PORT || '3100', 10);
+
 export const config = {
-  port: parseInt(process.env.PORT || '3100', 10),
+  port: rawPort,
   host: process.env.HOST || '0.0.0.0',
   apiKey: rawApiKey,
+
+  // OAuth 2.1 for /mcp (claude.ai-style connectors)
+  mcpOauthPassword: process.env.MCP_OAUTH_PASSWORD || '',
+  publicBaseUrl: process.env.PUBLIC_BASE_URL || `http://localhost:${rawPort}`,
+  allowInsecureIssuerUrl: process.env.MCP_DANGEROUSLY_ALLOW_INSECURE_ISSUER_URL === '1'
+    || process.env.MCP_DANGEROUSLY_ALLOW_INSECURE_ISSUER_URL === 'true',
 
   // Configurable CORS origin (comma-separated list, or * for all)
   corsOrigins: process.env.CORS_ORIGINS || '',
@@ -93,6 +101,32 @@ if (needsEncryptionKey && !config.security.encryptionKey) {
 // Nudge toward secure setup when serving plain HTTP
 if (!config.behindProxy) {
   process.stderr.write('[Security] WARNING: Running without HTTPS — consider using a reverse proxy for production. Set BEHIND_PROXY=true once configured.\n');
+}
+
+// MCP OAuth: validate issuer URL + password configuration
+try {
+  const issuer = new URL(config.publicBaseUrl);
+  const isLoopback = issuer.hostname === 'localhost' || issuer.hostname === '127.0.0.1';
+  if (issuer.protocol !== 'https:' && !isLoopback && !config.allowInsecureIssuerUrl) {
+    process.stderr.write('[Security] ERROR: PUBLIC_BASE_URL must be HTTPS for OAuth. Set MCP_DANGEROUSLY_ALLOW_INSECURE_ISSUER_URL=1 to override (trusted private network only).\n');
+    configErrors.push(
+      'PUBLIC_BASE_URL must be HTTPS for OAuth on /mcp. ' +
+      'Set MCP_DANGEROUSLY_ALLOW_INSECURE_ISSUER_URL=1 to override (only for trusted private networks).'
+    );
+  }
+  if (issuer.search || issuer.hash) {
+    configErrors.push('PUBLIC_BASE_URL must not have a query string or fragment.');
+  }
+} catch {
+  configErrors.push(`PUBLIC_BASE_URL is not a valid URL: ${config.publicBaseUrl}`);
+}
+
+if (!config.mcpOauthPassword) {
+  process.stderr.write('[Security] WARNING: MCP_OAUTH_PASSWORD is not set — claude.ai-style OAuth connectors will not be able to authorize. Set a strong password in your env to enable.\n');
+} else if (config.mcpOauthPassword.length < 12) {
+  configErrors.push('MCP_OAUTH_PASSWORD must be at least 12 characters.');
+} else if (config.mcpOauthPassword === config.apiKey) {
+  process.stderr.write('[Security] WARNING: MCP_OAUTH_PASSWORD equals API_KEY — set a separate password so consent-screen shoulder-surfing does not leak REST API access.\n');
 }
 
 // Warn if webhook URLs are configured but no secret is set
