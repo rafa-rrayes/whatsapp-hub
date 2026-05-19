@@ -180,17 +180,22 @@ export const tokensRepo = {
       .run(token_hash);
   },
 
-  /** Mark a token row as rotated (refresh used and replaced). */
+  /**
+   * Mark a token row as rotated. We keep refresh_hash populated so that a
+   * subsequent reuse of the old refresh token can be detected (row found,
+   * rotated_at != NULL → family compromise). Setting revoked=1 prevents the
+   * access token from being verified again.
+   */
   markRotated(token_hash: string, ts: number): void {
     getDb()
-      .prepare('UPDATE oauth_tokens SET rotated_at = ?, revoked = 1, refresh_hash = NULL WHERE token_hash = ?')
+      .prepare('UPDATE oauth_tokens SET rotated_at = ?, revoked = 1 WHERE token_hash = ?')
       .run(ts, token_hash);
   },
 
   /** Revoke all tokens in a refresh chain (used on refresh-token-reuse detection). */
   revokeFamily(family_id: string): number {
     return getDb()
-      .prepare('UPDATE oauth_tokens SET revoked = 1, refresh_hash = NULL WHERE family_id = ? AND revoked = 0')
+      .prepare('UPDATE oauth_tokens SET revoked = 1 WHERE family_id = ? AND revoked = 0')
       .run(family_id).changes;
   },
 
@@ -200,7 +205,7 @@ export const tokensRepo = {
     return getDb()
       .prepare(`
         UPDATE oauth_tokens
-        SET revoked = 1, refresh_hash = NULL
+        SET revoked = 1
         WHERE client_id = ? AND revoked = 0 AND created_at >= ?
       `)
       .run(client_id, since).changes;
