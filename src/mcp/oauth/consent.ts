@@ -63,6 +63,7 @@ function renderForm({ signedCid, clientName, redirectUri, scopes, error }: Rende
   button { flex: 1; padding: 10px 14px; border-radius: 6px; border: 0; font-size: 1em; cursor: pointer; }
   button.allow { background: #2563eb; color: white; }
   button.cancel { background: rgba(127,127,127,0.15); color: inherit; }
+  button[disabled] { opacity: 0.6; cursor: progress; }
   .err { color: #b91c1c; background: rgba(185,28,28,0.08); padding: 10px 12px; border-radius: 6px; font-size: 0.9em; }
   .note { font-size: 0.85em; opacity: 0.7; margin-top: 24px; }
 </style>
@@ -76,16 +77,71 @@ function renderForm({ signedCid, clientName, redirectUri, scopes, error }: Rende
   <dt>Requested scopes</dt><dd>${escapeHtml(scopeText)}</dd>
 </dl>
 ${errBlock}
-<form method="POST" action="/oauth/consent" autocomplete="off">
+<form id="consent-form" method="POST" action="/oauth/consent" autocomplete="off">
   <input type="hidden" name="cid" value="${escapeHtml(signedCid)}">
+  <input type="hidden" name="action" id="action-input" value="">
   <label for="password">MCP authorization password</label>
   <input type="password" id="password" name="password" autocomplete="off" autofocus required>
   <div class="row">
     <button class="allow" type="submit" name="action" value="allow">Allow</button>
-    <button class="cancel" type="submit" name="action" value="cancel">Cancel</button>
+    <button class="cancel" type="submit" name="action" value="cancel" formnovalidate>Cancel</button>
   </div>
 </form>
 <p class="note">If you didn't initiate this, click Cancel. The redirect URL is part of the client's registration; verify it points to a service you trust.</p>
+<script>
+  // Prevent double-submit: disable buttons once the form starts submitting.
+  // Some browsers/extensions/proxies double-fire form submissions; the second
+  // POST then hits a consent row that has already been consumed and fails with
+  // "Consent session not found".
+  (function () {
+    var form = document.getElementById('consent-form');
+    if (!form) return;
+    var submitted = false;
+    form.addEventListener('submit', function (ev) {
+      if (submitted) {
+        ev.preventDefault();
+        return;
+      }
+      submitted = true;
+      // Preserve which submit button was used (the browser only includes the
+      // clicked submitter; once we disable the buttons, that info is lost on a
+      // resubmit). Mirror it into the hidden action input.
+      var sub = ev.submitter;
+      var actionInput = document.getElementById('action-input');
+      if (sub && sub.value && actionInput) {
+        actionInput.value = sub.value;
+      }
+      var buttons = form.querySelectorAll('button');
+      for (var i = 0; i < buttons.length; i++) buttons[i].disabled = true;
+    });
+  })();
+</script>
+</body>
+</html>`;
+}
+
+function renderSuccessRedirect(redirectUrl: string): string {
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Authorization complete — WhatsApp Hub</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="refresh" content="0;url=${escapeHtml(redirectUrl)}">
+<style>
+  :root { color-scheme: light dark; font-family: system-ui, -apple-system, Segoe UI, sans-serif; }
+  body { max-width: 480px; margin: 60px auto; padding: 0 20px; line-height: 1.5; text-align: center; }
+  h1 { font-size: 1.4em; }
+  a.btn { display: inline-block; margin-top: 12px; padding: 10px 16px; background: #2563eb; color: white; text-decoration: none; border-radius: 6px; }
+  .note { font-size: 0.85em; opacity: 0.7; margin-top: 24px; }
+</style>
+</head>
+<body>
+<h1>Authorization approved</h1>
+<p>Redirecting you back to your MCP client…</p>
+<p><a class="btn" href="${escapeHtml(redirectUrl)}">Continue manually</a></p>
+<p class="note">If the popup doesn't close automatically, you can close this window and return to your MCP client.</p>
+<script>location.replace(${JSON.stringify(redirectUrl)});</script>
 </body>
 </html>`;
 }
@@ -122,6 +178,12 @@ const consentLimiter = rateLimit({
   message: 'Too many consent attempts; slow down.',
 });
 
+const noStore: RequestHandler = (_req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Pragma', 'no-cache');
+  next();
+};
+
 const get: RequestHandler = (req, res) => {
   const signedCid = typeof req.query.cid === 'string' ? req.query.cid : undefined;
   const loaded = loadConsent(signedCid);
@@ -140,7 +202,15 @@ const get: RequestHandler = (req, res) => {
 const post: RequestHandler = (req, res) => {
   const body = req.body as Record<string, string> | undefined;
   const signedCid = body?.cid;
-  const action = body?.action;
+  // The form has two submit buttons (Allow/Cancel) sharing name="action", and
+  // also a hidden name="action" populated by JS as a fallback for resubmits
+  // where the original submitter is no longer known. With Express's urlencoded
+  // parser (extended:false) duplicate fields become an array; we want the
+  // first non-empty value.
+  const rawAction = body?.action;
+  const action = Array.isArray(rawAction)
+    ? rawAction.find((v) => v && v.length > 0)
+    : rawAction;
   const password = body?.password ?? '';
 
   const loaded = loadConsent(signedCid);
@@ -190,12 +260,18 @@ const post: RequestHandler = (req, res) => {
   const url = new URL(params.redirectUri);
   url.searchParams.set('code', code);
   if (params.state) url.searchParams.set('state', params.state);
-  res.redirect(303, url.href);
+  // Use a 200 OK interstitial page (not a 303 redirect) so the user always
+  // gets visible confirmation that the click was accepted. The page then
+  // auto-redirects via meta-refresh + JS, with a manual fallback link. This
+  // avoids the "first click does nothing" symptom when the popup or proxy
+  // swallows a bare redirect.
+  res.status(200).type('html').send(renderSuccessRedirect(url.href));
 };
 
 export function createConsentRouter(): Router {
   const router = express.Router();
   router.use(express.urlencoded({ extended: false, limit: '32kb' }));
+  router.use(noStore);
   router.get('/consent', get);
   router.post('/consent', consentLimiter, post);
   return router;

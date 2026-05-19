@@ -98,6 +98,17 @@ export function createServer() {
   app.use(express.json({ limit: '1mb' }));
   app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 
+  // Same-origin baseline: the public URL the server is reachable at always
+  // counts as same-origin. Without this, browser POSTs from our own pages
+  // (e.g. the OAuth consent form) get logged as "blocked" even though
+  // browsers don't enforce CORS on same-origin requests.
+  let publicOrigin: string | null = null;
+  try {
+    publicOrigin = new URL(config.publicBaseUrl).origin;
+  } catch {
+    publicOrigin = null;
+  }
+
   // CORS — configurable origins
   app.use((_req, res, next) => {
     const reqOrigin = _req.headers.origin;
@@ -105,7 +116,12 @@ export function createServer() {
 
     let allowed = false;
 
-    if (origins === '*') {
+    if (reqOrigin && publicOrigin && reqOrigin === publicOrigin) {
+      // Same-origin as the configured public URL — always allow.
+      res.header('Access-Control-Allow-Origin', reqOrigin);
+      res.header('Vary', 'Origin');
+      allowed = true;
+    } else if (origins === '*') {
       res.header('Access-Control-Allow-Origin', '*');
       allowed = true;
     } else if (origins) {
