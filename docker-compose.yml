@@ -17,6 +17,9 @@ services:
       - AUTO_DOWNLOAD_MEDIA=true
       - MAX_MEDIA_SIZE_MB=100
       - BEHIND_PROXY=${BEHIND_PROXY:-false}
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-}
+      - CORS_ORIGINS=${CORS_ORIGINS:-}
+      - MCP_OAUTH_PASSWORD=${MCP_OAUTH_PASSWORD:-}
       - LOG_LEVEL=info
       - SESSION_NAME=default
       - WEBHOOK_URLS=${WEBHOOK_URLS:-}
