@@ -24,6 +24,7 @@ import { secFetchMiddleware } from './middleware/sec-fetch.js';
 import { generateOpenApiSpec } from './openapi.js';
 import { generateOpenApiMarkdown } from './openapi-md.js';
 import { deprecationMiddleware } from './middleware/deprecation.js';
+import { registerMcp } from '../mcp/index.js';
 
 /**
  * Returns true if `origin` is a loopback or RFC-1918 private address on the given port.
@@ -244,6 +245,10 @@ export function createServer() {
     app.use(`/api${path}`, router);
   }
 
+  // MCP (Model Context Protocol) — Streamable HTTP endpoint for LLM agents.
+  // Auth: same x-api-key model as the REST API. Stateless transport.
+  registerMcp(app);
+
   // API docs summary
   app.get('/api', (_req, res) => {
     res.json({
@@ -331,6 +336,9 @@ export function createServer() {
         docs: {
           'GET /api/openapi.json': 'OpenAPI 3.1 specification (no auth required)',
           'GET /api/openapi.md': 'API reference rendered as Markdown (append ?download=1 for file download)',
+        },
+        mcp: {
+          'POST /mcp': 'MCP Streamable HTTP endpoint for LLM agents — tools to navigate chats, search messages, summarize, and send. Auth: same x-api-key.',
         },
       },
       versioning: {
