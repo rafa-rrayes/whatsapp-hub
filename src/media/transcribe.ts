@@ -13,8 +13,8 @@ const PROMPTS: Record<TranscribeKind, string> = {
     'Respond with only the transcription — no preamble, labels, or quotation marks. ' +
     'If there is no intelligible speech, respond with an empty string.',
   image:
-    'Describe this image concisely in one or two sentences for someone who cannot see it. ' +
-    'Focus on the main subject and any clearly legible text. Respond with only the description.',
+    'Describe this image as accurately as you can, in one or two sentences for someone who cannot see it. ' +
+    'Focus on the main subject and any clearly legible text. Respond with only the description and text extracted.',
 };
 
 interface GeminiResponse {
