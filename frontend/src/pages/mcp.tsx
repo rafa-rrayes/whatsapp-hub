@@ -1,7 +1,15 @@
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { Plug, Lock, Compass, Search, BarChart3, Send } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from "@/components/ui/dropdown-menu"
+import { Plug, Lock, Compass, Search, BarChart3, Send, Download, Copy, ChevronDown } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
+import { toast } from "sonner"
 import {
   type Endpoint,
   MethodBadge,
@@ -258,6 +266,111 @@ const CLIENT_CONFIG = `{
   }
 }`
 
+const AUTH_METHODS = [
+  {
+    label: "API key",
+    code: "x-api-key: YOUR_KEY",
+    desc: "Same key as the REST API — for CLI / local clients",
+  },
+  {
+    label: "OAuth 2.1 (Bearer)",
+    code: "Authorization: Bearer <token>",
+    desc: "For claude.ai-style connectors. Discovery at /.well-known/oauth-protected-resource/mcp",
+  },
+]
+
+const MCP_OVERVIEW =
+  "The MCP endpoint speaks JSON-RPC 2.0 over stateless Streamable HTTP — every call is a self-contained `POST /mcp`; `GET` and `DELETE` return 405. Call `tools/list` to discover the live schema and `tools/call` to invoke a tool."
+
+// ---------------------------------------------------------------------------
+// Markdown export — built from the data above so it stays in sync with the page.
+// ---------------------------------------------------------------------------
+
+const MCP_MD_FILENAME = "whatsapp-hub-mcp.md"
+
+function buildMcpMarkdown(): string {
+  const out: string[] = []
+  out.push("# WhatsApp Hub — MCP Server")
+  out.push("")
+  out.push(`Model Context Protocol server · ${TOTAL_TOOLS} tools exposed to AI clients like Claude.`)
+  out.push("")
+  out.push("## Connection & Authentication")
+  out.push("")
+  out.push(MCP_OVERVIEW)
+  out.push("")
+  for (const m of AUTH_METHODS) {
+    out.push(`- **${m.label}** — \`${m.code}\` · ${m.desc}`)
+  }
+  out.push("")
+  out.push("### Connect over HTTP")
+  out.push("")
+  out.push("```bash")
+  out.push(CONNECT_EXAMPLE)
+  out.push("```")
+  out.push("")
+  out.push("### MCP client config (http transport)")
+  out.push("")
+  out.push("```json")
+  out.push(CLIENT_CONFIG)
+  out.push("```")
+  out.push("")
+  out.push("## Tools")
+
+  for (const group of TOOL_GROUPS) {
+    out.push("")
+    out.push(`### ${group.title}`)
+    out.push("")
+    out.push(group.description)
+    for (const tool of group.tools) {
+      out.push("")
+      out.push(`#### \`${tool.path}\``)
+      out.push("")
+      out.push(tool.description)
+      if (tool.notes) {
+        out.push("")
+        out.push(`> ${tool.notes}`)
+      }
+      const params = tool.params ?? []
+      if (params.length > 0) {
+        out.push("")
+        out.push("| Parameter | Type | Required | Default | Description |")
+        out.push("| --- | --- | --- | --- | --- |")
+        for (const p of params) {
+          const required = p.required ? "yes" : "no"
+          const def = p.default !== undefined ? `\`${p.default}\`` : "—"
+          const desc = p.description.replace(/\|/g, "\\|")
+          out.push(`| \`${p.name}\` | \`${p.type}\` | ${required} | ${def} | ${desc} |`)
+        }
+      }
+    }
+  }
+
+  out.push("")
+  return out.join("\n")
+}
+
+async function copyMcpMarkdown() {
+  try {
+    await navigator.clipboard.writeText(buildMcpMarkdown())
+    toast.success("Copied MCP docs to clipboard")
+  } catch {
+    toast.error("Failed to copy to clipboard")
+  }
+}
+
+function downloadMcpMarkdown() {
+  const blob = new Blob([buildMcpMarkdown()], { type: "text/markdown" })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement("a")
+  a.href = url
+  a.download = MCP_MD_FILENAME
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+  toast.success(`Downloaded ${MCP_MD_FILENAME}`)
+}
+
 // ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
@@ -266,14 +379,37 @@ export function McpPage() {
   return (
     <div className="space-y-6 pb-16">
       {/* Header */}
-      <div>
-        <div className="flex items-center gap-2.5 mb-1">
-          <Plug className="h-5 w-5 text-primary" />
-          <h1 className="text-2xl font-semibold tracking-tight">MCP Server</h1>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2.5 mb-1">
+            <Plug className="h-5 w-5 text-primary" />
+            <h1 className="text-2xl font-semibold tracking-tight">MCP Server</h1>
+          </div>
+          <p className="text-sm text-muted-foreground">
+            Model Context Protocol server &middot; {TOTAL_TOOLS} tools exposed to AI clients like Claude
+          </p>
         </div>
-        <p className="text-sm text-muted-foreground">
-          Model Context Protocol server &middot; {TOTAL_TOOLS} tools exposed to AI clients like Claude
-        </p>
+        <div className="flex items-center gap-2 shrink-0">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm" className="h-8 text-xs gap-1.5">
+                <Download className="h-3.5 w-3.5" />
+                Export as MD
+                <ChevronDown className="h-3.5 w-3.5 opacity-60" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onSelect={() => void copyMcpMarkdown()}>
+                <Copy className="h-3.5 w-3.5" />
+                Copy to clipboard
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={downloadMcpMarkdown}>
+                <Download className="h-3.5 w-3.5" />
+                Download .md
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
       </div>
 
       {/* Connection */}
@@ -297,18 +433,7 @@ export function McpPage() {
           </p>
 
           <div className="grid gap-3 sm:grid-cols-2">
-            {[
-              {
-                label: "API key",
-                code: "x-api-key: YOUR_KEY",
-                desc: "Same key as the REST API — for CLI / local clients",
-              },
-              {
-                label: "OAuth 2.1 (Bearer)",
-                code: "Authorization: Bearer <token>",
-                desc: "For claude.ai-style connectors. Discovery at /.well-known/oauth-protected-resource/mcp",
-              },
-            ].map((m) => (
+            {AUTH_METHODS.map((m) => (
               <div key={m.label} className="rounded-lg border border-border/50 p-3 bg-muted/20">
                 <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider mb-1.5">{m.label}</div>
                 <code className="text-xs font-mono text-foreground/90 break-all">{m.code}</code>

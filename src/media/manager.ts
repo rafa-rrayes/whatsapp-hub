@@ -4,6 +4,7 @@ import { mediaRepo } from '../database/repositories/media.js';
 import { config } from '../config.js';
 import { getSettings } from '../settings.js';
 import { log } from '../utils/logger.js';
+import { transcribeMedia, transcriptionKindFor } from './transcribe.js';
 import type { MediaMessageFields } from '../events/types.js';
 import fs from 'fs';
 import path from 'path';
@@ -166,6 +167,37 @@ class MediaManager {
     });
 
     log.media.info({ path: relativePath, sizeKB: Math.round(buffer.length / 1024) }, 'Downloaded media');
+
+    // Transcribe/describe via Gemini if enabled. Runs inline in the serial queue
+    // and is fully error-contained so it never triggers a download retry.
+    await this.maybeTranscribe(mediaId, msg, buffer, mimeType);
+  }
+
+  /**
+   * Transcribe audio / describe images with Gemini and store the result on the
+   * message. No-op unless transcription is enabled, a key is set, and the media
+   * type is eligible. Never throws.
+   */
+  private async maybeTranscribe(mediaId: string, msg: WAMessage, buffer: Buffer, mimeType: string): Promise<void> {
+    const settings = getSettings();
+    if (!settings.transcribeMedia || !settings.geminiApiKey) return;
+
+    const kind = transcriptionKindFor(mimeType);
+    if (!kind) return;
+
+    const messageId = msg.key?.id;
+    if (!messageId) return;
+
+    const { messagesRepo } = await import('../database/repositories/messages.js');
+    try {
+      messagesRepo.setTranscriptionStatus(messageId, 'pending');
+      const text = await transcribeMedia({ buffer, mimeType, kind });
+      messagesRepo.setTranscription(messageId, text || null, 'done');
+      log.media.info({ mediaId, kind, chars: text.length }, 'Transcribed media');
+    } catch (err) {
+      messagesRepo.setTranscriptionStatus(messageId, 'failed');
+      log.media.warn({ err: String(err), mediaId, kind }, 'Media transcription failed');
+    }
   }
 
   /** Manually retry downloading a failed media item by reconstructing from the stored raw_message. */

@@ -82,6 +82,37 @@ export function maybeDecrypt(value: string): string {
   }
 }
 
+// Lazy-initialized key for encrypting secret settings (e.g. API keys)
+let settingsSecretKey: Buffer | null = null;
+
+function getSettingsSecretKey(): Buffer {
+  if (!settingsSecretKey) {
+    settingsSecretKey = deriveKey('whatsapp-hub-settings-secrets');
+  }
+  return settingsSecretKey;
+}
+
+/**
+ * Encrypt a secret runtime setting (e.g. a third-party API key) for storage.
+ * Caller must ensure ENCRYPTION_KEY is configured before calling.
+ */
+export function encryptSetting(value: string): string {
+  return encrypt(value, getSettingsSecretKey());
+}
+
+/**
+ * Decrypt a secret setting, or return as-is if it isn't encrypted
+ * (supports values stored before encryption was enabled).
+ */
+export function maybeDecryptSetting(value: string): string {
+  if (!isEncrypted(value)) return value;
+  try {
+    return decrypt(value, getSettingsSecretKey());
+  } catch {
+    return value;
+  }
+}
+
 /**
  * Migrate all plaintext webhook secrets to encrypted form.
  * Called at startup when SECURITY_ENCRYPT_WEBHOOK_SECRETS is enabled.

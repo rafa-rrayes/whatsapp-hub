@@ -57,6 +57,11 @@ export const config = {
   maxMediaSizeMB: parseInt(process.env.MAX_MEDIA_SIZE_MB || '100', 10),
   autoDownloadMedia: process.env.AUTO_DOWNLOAD_MEDIA !== 'false',
 
+  // Media transcription via Google Gemini (audio → transcript, image → description)
+  transcribeMedia: process.env.TRANSCRIBE_MEDIA === 'true',
+  geminiApiKey: process.env.GEMINI_API_KEY || '',
+  geminiModel: process.env.GEMINI_MODEL || 'gemini-3.1-flash-lite',
+
   webhookUrls: (process.env.WEBHOOK_URLS || '')
     .split(',')
     .map((u) => u.trim())

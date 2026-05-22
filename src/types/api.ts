@@ -30,6 +30,8 @@ export interface ApiMessage {
   media_duration?: number;
   media_width?: number;
   media_height?: number;
+  media_transcription?: string;
+  media_transcription_status?: string;
   reaction_emoji?: string;
   reaction_target_id?: string;
   poll_name?: string;

@@ -52,6 +52,8 @@ export interface MessageRow {
   media_duration?: number;
   media_width?: number;
   media_height?: number;
+  media_transcription?: string;
+  media_transcription_status?: string;
   reaction_emoji?: string;
   reaction_target_id?: string;
   poll_name?: string;
@@ -230,6 +232,23 @@ export const messagesRepo = {
       .all({ ...params, limit, offset }) as MessageRow[];
 
     return { data: data.map(stripRawMessage), total: total.count };
+  },
+
+  /**
+   * Store an AI transcription/description for a media message.
+   * Kept separate from upsert so re-receiving the message never clobbers it.
+   */
+  setTranscription(messageId: string, text: string | null, status: string): void {
+    getDb()
+      .prepare('UPDATE messages SET media_transcription = ?, media_transcription_status = ? WHERE id = ?')
+      .run(text, status, messageId);
+  },
+
+  /** Update only the transcription status (e.g. mark 'pending' before the API call). */
+  setTranscriptionStatus(messageId: string, status: string): void {
+    getDb()
+      .prepare('UPDATE messages SET media_transcription_status = ? WHERE id = ?')
+      .run(status, messageId);
   },
 
   markDeleted(id: string): void {

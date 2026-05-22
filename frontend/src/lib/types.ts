@@ -184,4 +184,8 @@ export interface SettingItem {
   value: unknown
   defaultValue: unknown
   isOverridden: boolean
+  /** True for secret settings (e.g. API keys) — value is never returned. */
+  isSecret?: boolean
+  /** For secret settings: whether a value is currently configured. */
+  isSet?: boolean
 }

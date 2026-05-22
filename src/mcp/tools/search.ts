@@ -105,6 +105,10 @@ function buildSnippet(row: MessageRow, max = 160): string {
   if (body) {
     return body.length <= max ? body : body.slice(0, max - 1) + '…';
   }
+  const transcript = (row.media_transcription || '').replace(/\s+/g, ' ').trim();
+  if (transcript) {
+    return transcript.length <= max ? transcript : transcript.slice(0, max - 1) + '…';
+  }
   if (row.has_media === 1) {
     const mime = row.media_mime_type || '';
     if (mime.startsWith('image/')) return mime === 'image/webp' ? '[sticker]' : '[image]';
@@ -921,6 +925,8 @@ const getMessageTool: McpTool = {
                 mime_type: row.media_mime_type ?? null,
                 filename: row.media_filename ?? null,
                 size_bytes: row.media_size ?? null,
+                transcription: row.media_transcription ?? null,
+                transcription_status: row.media_transcription_status ?? null,
               }
             : null;
 

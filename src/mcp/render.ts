@@ -47,6 +47,14 @@ function mediaTag(msg: MessageRow): string | null {
   return filename ? `[${kind}: ${filename}]` : `[${kind}]`;
 }
 
+/** Inline AI transcription (audio) / description (image), if present. */
+function transcriptionTag(msg: MessageRow): string | null {
+  const t = msg.media_transcription?.replace(/\r?\n/g, ' ').trim();
+  if (!t) return null;
+  const label = (msg.media_mime_type || '').startsWith('audio/') ? 'transcript' : 'description';
+  return `_(${label}: ${t})_`;
+}
+
 interface AttachedReaction {
   emoji: string;
   from_jid?: string;
@@ -128,6 +136,9 @@ export function renderConversation(messages: MessageRow[], opts: RenderOptions =
 
     const media = mediaTag(msg);
     if (media) body = body ? `${body} ${media}` : media;
+
+    const transcript = transcriptionTag(msg);
+    if (transcript) body = body ? `${body} ${transcript}` : transcript;
 
     const tags: string[] = [];
     if (msg.edit_type && msg.edit_type !== 0) tags.push('_(edited)_');

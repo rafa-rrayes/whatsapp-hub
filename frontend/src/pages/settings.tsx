@@ -31,6 +31,11 @@ export function SettingsPage() {
   const [logLevel, setLogLevel] = useState("info")
   const [autoDownloadMedia, setAutoDownloadMedia] = useState(true)
   const [maxMediaSizeMB, setMaxMediaSizeMB] = useState(100)
+  const [transcribeMedia, setTranscribeMedia] = useState(false)
+  const [geminiModel, setGeminiModel] = useState("gemini-3.1-flash-lite")
+  // The API key is never returned by the server; this holds a newly typed value.
+  const [geminiApiKey, setGeminiApiKey] = useState("")
+  const geminiKeySet = findSetting(data?.data, "geminiApiKey")?.isSet ?? false
 
   // Sync local state from fetched data
   useEffect(() => {
@@ -42,16 +47,29 @@ export function SettingsPage() {
     if (adm) setAutoDownloadMedia(adm.value as boolean)
     const mms = findSetting(items, "maxMediaSizeMB")
     if (mms) setMaxMediaSizeMB(mms.value as number)
+    const tm = findSetting(items, "transcribeMedia")
+    if (tm) setTranscribeMedia(tm.value as boolean)
+    const gm = findSetting(items, "geminiModel")
+    if (gm) setGeminiModel(gm.value as string)
   }, [data])
 
   function handleSave() {
-    updateSettings.mutate(
-      { logLevel, autoDownloadMedia, maxMediaSizeMB },
-      {
-        onSuccess: () => toast.success("Settings saved"),
-        onError: (e) => toast.error(e.message),
-      }
-    )
+    const payload: Record<string, unknown> = {
+      logLevel,
+      autoDownloadMedia,
+      maxMediaSizeMB,
+      transcribeMedia,
+      geminiModel,
+    }
+    // Only send the API key when the user typed a new one (empty = leave unchanged).
+    if (geminiApiKey.trim()) payload.geminiApiKey = geminiApiKey.trim()
+    updateSettings.mutate(payload, {
+      onSuccess: () => {
+        toast.success("Settings saved")
+        setGeminiApiKey("") // don't keep the key in the field
+      },
+      onError: (e) => toast.error(e.message),
+    })
   }
 
   function handleReset(key: string) {
@@ -62,6 +80,9 @@ export function SettingsPage() {
     if (key === "logLevel") setLogLevel(defaultVal as string)
     if (key === "autoDownloadMedia") setAutoDownloadMedia(defaultVal as boolean)
     if (key === "maxMediaSizeMB") setMaxMediaSizeMB(defaultVal as number)
+    if (key === "transcribeMedia") setTranscribeMedia(defaultVal as boolean)
+    if (key === "geminiModel") setGeminiModel(defaultVal as string)
+    if (key === "geminiApiKey") setGeminiApiKey("")
     // Save just this key with default value
     updateSettings.mutate(
       { [key]: defaultVal },
@@ -160,6 +181,61 @@ export function SettingsPage() {
               value={maxMediaSizeMB}
               onChange={(e) => setMaxMediaSizeMB(parseInt(e.target.value, 10) || 0)}
               className="w-24 h-9"
+            />
+          </SettingRow>
+        </CardContent>
+      </Card>
+
+      {/* Media transcription */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">Media Transcription</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <SettingRow
+            label="Transcribe Media"
+            description="Use Google Gemini to transcribe voice notes and describe images. Transcripts appear when pulling messages and are searchable."
+            isOverridden={isOverridden("transcribeMedia")}
+            onReset={() => handleReset("transcribeMedia")}
+          >
+            <Switch checked={transcribeMedia} onCheckedChange={setTranscribeMedia} />
+          </SettingRow>
+
+          <div className="h-px bg-border" />
+
+          <SettingRow
+            label="Gemini API Key"
+            description={
+              geminiKeySet
+                ? "A key is configured. Enter a new key to replace it, or reset to clear."
+                : "Get a key at aistudio.google.com/apikey. Stored encrypted at rest when ENCRYPTION_KEY is set."
+            }
+            isOverridden={isOverridden("geminiApiKey")}
+            onReset={() => handleReset("geminiApiKey")}
+          >
+            <Input
+              type="password"
+              autoComplete="off"
+              value={geminiApiKey}
+              placeholder={geminiKeySet ? "•••••••••• (saved)" : "Paste API key"}
+              onChange={(e) => setGeminiApiKey(e.target.value)}
+              className="w-56 h-9"
+            />
+          </SettingRow>
+
+          <div className="h-px bg-border" />
+
+          <SettingRow
+            label="Gemini Model"
+            description="The Gemini model used for transcription and image description."
+            isOverridden={isOverridden("geminiModel")}
+            onReset={() => handleReset("geminiModel")}
+          >
+            <Input
+              type="text"
+              value={geminiModel}
+              onChange={(e) => setGeminiModel(e.target.value)}
+              className="w-56 h-9"
             />
           </SettingRow>
         </CardContent>

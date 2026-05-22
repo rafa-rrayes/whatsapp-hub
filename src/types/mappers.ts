@@ -41,6 +41,8 @@ export function toApiMessage(row: MessageRow): ApiMessage {
     media_duration: row.media_duration,
     media_width: row.media_width,
     media_height: row.media_height,
+    media_transcription: row.media_transcription,
+    media_transcription_status: row.media_transcription_status,
     reaction_emoji: row.reaction_emoji,
     reaction_target_id: row.reaction_target_id,
     poll_name: row.poll_name,

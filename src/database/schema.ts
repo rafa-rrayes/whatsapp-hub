@@ -79,6 +79,8 @@ export function applySchema(db: Database.Database): void {
       media_duration  INTEGER,                    -- audio/video duration in seconds
       media_width     INTEGER,
       media_height    INTEGER,
+      media_transcription        TEXT,             -- AI transcript (audio) / description (image)
+      media_transcription_status TEXT,             -- pending, done, failed, skipped
       -- Reaction (if message_type = 'reaction')
       reaction_emoji  TEXT,
       reaction_target_id TEXT,
