@@ -14,6 +14,7 @@ import { ActionsPage } from "@/pages/actions"
 import { ConnectionPage } from "@/pages/connection"
 import { SettingsPage } from "@/pages/settings"
 import { ApiDocsPage } from "@/pages/api-docs"
+import { McpPage } from "@/pages/mcp"
 
 function AuthenticatedApp() {
   useWebSocket()
@@ -32,6 +33,7 @@ function AuthenticatedApp() {
         <Route path="connection" element={<ConnectionPage />} />
         <Route path="settings" element={<SettingsPage />} />
         <Route path="api-docs" element={<ApiDocsPage />} />
+        <Route path="mcp" element={<McpPage />} />
       </Route>
     </Routes>
   )

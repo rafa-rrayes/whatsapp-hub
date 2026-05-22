@@ -13,6 +13,7 @@ import {
   LogOut,
   MessageCircle,
   BookOpen,
+  Plug,
   Settings,
 } from "lucide-react"
 import { useAuthStore } from "@/stores/auth"
@@ -31,6 +32,7 @@ const navItems = [
   { to: "/connection", icon: Wifi, label: "Connection" },
   { to: "/settings", icon: Settings, label: "Settings" },
   { to: "/api-docs", icon: BookOpen, label: "API Docs" },
+  { to: "/mcp", icon: Plug, label: "MCP" },
 ]
 
 export function Sidebar() {
