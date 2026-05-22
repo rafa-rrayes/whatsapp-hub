@@ -82,6 +82,8 @@ curl -X POST -H "x-api-key: YOUR_KEY" -H "Content-Type: application/json" \
 
 Interactive API docs are available in the dashboard at `GET /api`. The full spec is also exposed as JSON at `GET /api/openapi.json` and as Markdown at `GET /api/openapi.md` (append `?download=1` to download as a file).
 
+An [MCP](https://modelcontextprotocol.io) (Model Context Protocol) server is also exposed at `POST /mcp` so AI clients like Claude can read and act on your WhatsApp data as tools — see the **MCP Server** section below.
+
 ### Authentication
 
 All requests require an API key via one of:
@@ -323,6 +325,52 @@ curl -X POST -H "x-api-key: $KEY" -H "Content-Type: application/json" \
   -d '{"days": 7, "preset": "llm", "anonymize_jids": true, "redact_phone_numbers": true}' \
   http://localhost:3100/api/export -o export.md
 ```
+
+</details>
+
+<details>
+<summary><strong>MCP Server</strong></summary>
+
+An [MCP](https://modelcontextprotocol.io) (Model Context Protocol) server is exposed at `POST /mcp` so AI clients (Claude, etc.) can read and act on your WhatsApp data as tools. It speaks JSON-RPC 2.0 over stateless Streamable HTTP — every call is a self-contained POST; `GET`/`DELETE` return 405.
+
+**Authentication** (one of):
+
+| Method | Usage |
+|--------|-------|
+| API key | `x-api-key: YOUR_KEY` (same key as the REST API — for CLI/local clients) |
+| OAuth 2.1 | `Authorization: Bearer <token>` (claude.ai-style connectors; discovery at `/.well-known/oauth-protected-resource/mcp`) |
+
+```bash
+# List available tools
+curl -X POST -H "x-api-key: $KEY" -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' \
+  http://localhost:3100/mcp
+
+# Call a tool
+curl -X POST -H "x-api-key: $KEY" -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"search_messages","arguments":{"query":"invoice","limit":5}}}' \
+  http://localhost:3100/mcp
+```
+
+**Tools:**
+
+| Tool | Type | Description |
+|------|------|-------------|
+| `whatsapp_overview` | read | Dashboard totals + recent activity. Call first to orient. |
+| `resolve_contact` | read | Fuzzy-map a name / phone / JID to a ranked list of chats. |
+| `list_chats` | read | Browse chats with filters (unread, group/DM, name, recency). |
+| `search_messages` | read | Full-text search returning snippets. |
+| `recent_activity` | read | Activity over a time window (summary / firehose / rendered). |
+| `get_conversation` | read | Render a chat as markdown (last N, or window around an anchor). |
+| `get_message` | read | One message by ID with full context (media, reactions, quote). |
+| `get_thread` | read | Walk the quote chain backward from a message. |
+| `chat_summary` | read | Activity report for one chat (top senders, peak hour, types). |
+| `list_media` | read | Browse media attachment metadata. |
+| `export_conversation` | read | Render chats to md/txt/json via the export pipeline. |
+| `send_message` | **write** | Send text/media/location to a JID. Resolve names first. |
+| `react_to_message` | **write** | Add/replace/remove a reaction emoji (empty string removes). |
+
+Write tools advertise `readOnlyHint: false` — MCP clients should confirm with the user before invoking. Targeting always requires an explicit JID; use `resolve_contact` first.
 
 </details>
 

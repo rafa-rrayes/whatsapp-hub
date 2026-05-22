@@ -433,6 +433,41 @@ export function generateOpenApiSpec(): object {
           },
         },
       },
+      '/mcp': {
+        // MCP is mounted at the server root (POST /mcp), not under the /api base path.
+        servers: [{ url: '/', description: 'Server root — MCP is mounted outside /api' }],
+        post: {
+          summary: 'MCP (Model Context Protocol) endpoint',
+          description:
+            'Absolute path: `POST /mcp` (mounted at the server root, not under `/api`). ' +
+            'Speaks JSON-RPC 2.0 over stateless Streamable HTTP and exposes WhatsApp data and ' +
+            'actions as MCP tools for AI clients such as Claude. Each call is a self-contained ' +
+            'POST; GET and DELETE return 405. Authenticate with `x-api-key` (the same key as the ' +
+            'REST API) or an OAuth 2.1 bearer token for claude.ai-style connectors (discovery at ' +
+            '`/.well-known/oauth-protected-resource/mcp`).\n\n' +
+            'Read tools: `whatsapp_overview`, `resolve_contact`, `list_chats`, `search_messages`, ' +
+            '`recent_activity`, `get_conversation`, `get_message`, `get_thread`, `chat_summary`, ' +
+            '`list_media`, `export_conversation`. Write tools: `send_message`, `react_to_message`. ' +
+            'Call `tools/list` for the live input schemas and `tools/call` to invoke a tool.',
+          tags: ['MCP'],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  description: 'JSON-RPC 2.0 request, e.g. { "jsonrpc": "2.0", "id": 1, "method": "tools/list" }',
+                },
+              },
+            },
+          },
+          responses: {
+            '200': ok,
+            '401': unauthorized,
+            '405': { description: 'Method Not Allowed (only POST is supported)' },
+          },
+        },
+      },
       '/openapi.json': {
         get: { summary: 'OpenAPI specification', tags: ['System'], security: [], responses: { '200': ok } },
       },

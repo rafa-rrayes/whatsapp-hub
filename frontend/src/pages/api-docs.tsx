@@ -32,7 +32,7 @@ import { Button } from "@/components/ui/button"
 // Types
 // ---------------------------------------------------------------------------
 
-type HttpMethod = "GET" | "POST" | "PUT" | "DELETE" | "WS"
+type HttpMethod = "GET" | "POST" | "PUT" | "DELETE" | "WS" | "TOOL"
 
 interface Param {
   name: string
@@ -917,6 +917,220 @@ messages_included: 1834
       },
     ],
   },
+  {
+    id: "mcp",
+    title: "MCP Server",
+    description:
+      "Model Context Protocol server — exposes WhatsApp data and actions as tools for AI clients like Claude over a single JSON-RPC endpoint. 11 read tools plus 2 write tools (send & react).",
+    prefix: "/mcp",
+    endpoints: [
+      {
+        method: "POST",
+        path: "/mcp",
+        description:
+          "The MCP endpoint. Speaks JSON-RPC 2.0 over stateless Streamable HTTP and exposes the tools below to MCP clients. Use tools/list to discover the live schema and tools/call to invoke a tool.",
+        notes:
+          "Stateless Streamable HTTP — every call is a self-contained POST; GET and DELETE return 405. Authenticate with x-api-key (the same key as the REST API) or an OAuth 2.1 bearer token for claude.ai-style connectors (discovery at /.well-known/oauth-protected-resource/mcp). Request body limit: 4 MB.",
+        curl: `# List available tools
+curl -X POST -H "x-api-key: YOUR_KEY" -H "Content-Type: application/json" \\
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' \\
+  http://localhost:3100/mcp
+
+# Call a tool
+curl -X POST -H "x-api-key: YOUR_KEY" -H "Content-Type: application/json" \\
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"search_messages","arguments":{"query":"invoice","limit":5}}}' \\
+  http://localhost:3100/mcp`,
+        response: `{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "result": {
+    "content": [
+      { "type": "text", "text": "{ \\"total\\": 12, \\"returned\\": 5, \\"results\\": [ ... ] }" }
+    ]
+  }
+}`,
+      },
+      {
+        method: "TOOL",
+        path: "whatsapp_overview",
+        description:
+          "High-level dashboard: totals across chats, contacts, groups, and messages, plus recent activity and the most active chats. Call this first to orient yourself before drilling in.",
+        params: [
+          { name: "days", type: "number", description: "Window size in days for recent stats (max 90)", default: "7" },
+        ],
+      },
+      {
+        method: "TOOL",
+        path: "resolve_contact",
+        description:
+          "Fuzzy lookup mapping a free-text query (name, partial name, phone number, or JID) to a ranked list of contacts, groups, and chats. Translate a reference like \"Mom\" into a JID before calling tools that require one.",
+        params: [
+          { name: "query", type: "string", required: true, description: "Name, partial name, phone number, or JID to look up" },
+          { name: "limit", type: "number", description: "Max candidates to return (max 30)", default: "10" },
+          { name: "groups_only", type: "boolean", description: "Only consider group chats", default: "false" },
+          { name: "dms_only", type: "boolean", description: "Only consider 1:1 (DM) chats", default: "false" },
+        ],
+      },
+      {
+        method: "TOOL",
+        path: "list_chats",
+        description:
+          "Browse chats with optional filters (unread-only, groups/DMs, name substring, active within N days), sorted by most recent activity.",
+        params: [
+          { name: "unread_only", type: "boolean", description: "Only chats with unread_count > 0", default: "false" },
+          { name: "groups_only", type: "boolean", description: "Only group chats", default: "false" },
+          { name: "dms_only", type: "boolean", description: "Only 1:1 (DM) chats", default: "false" },
+          { name: "name_contains", type: "string", description: "Case-insensitive substring filter on the chat name or JID" },
+          { name: "active_since_days", type: "number", description: "Only chats whose last message is within the last N days (max 365)" },
+          { name: "limit", type: "number", description: "Max chats to return (max 200)", default: "30" },
+        ],
+      },
+      {
+        method: "TOOL",
+        path: "search_messages",
+        description:
+          "Full-text search across the message archive. Returns snippets (not full bodies) so you can scan many hits cheaply. Narrow by chat, sender, time range, or message type.",
+        params: [
+          { name: "query", type: "string", required: true, description: "Free-text search term, matched against message bodies" },
+          { name: "chat", type: "string", description: "Name or JID to restrict the search to a single chat" },
+          { name: "from", type: "string", description: "Sender name or JID to restrict to a single sender" },
+          { name: "after", type: "string", description: "ISO 8601 or unix timestamp. Lower bound, exclusive" },
+          { name: "before", type: "string", description: "ISO 8601 or unix timestamp. Upper bound, exclusive" },
+          { name: "types", type: "string[]", description: "Message types to include (e.g. [\"text\",\"image\"]). Omit for all" },
+          { name: "limit", type: "number", description: "Max results (max 100)", default: "20" },
+        ],
+      },
+      {
+        method: "TOOL",
+        path: "recent_activity",
+        description:
+          "Summarize activity over a flexible time window. Modes: summary (per-chat aggregates), firehose (chronological message list), rendered (markdown per chat).",
+        params: [
+          { name: "window", type: "string", description: "Named window: today, yesterday, past_hour, past_24h, past_week. Overridden by since/until", default: "past_24h" },
+          { name: "since", type: "string", description: "ISO 8601 or unix timestamp; overrides window if set" },
+          { name: "until", type: "string", description: "ISO 8601 or unix timestamp; defaults to now" },
+          { name: "chats", type: "string[]", description: "Names or JIDs to include. If set, only these chats are considered" },
+          { name: "exclude_chats", type: "string[]", description: "Names or JIDs to exclude from results" },
+          { name: "groups_only", type: "boolean", description: "Only group chats", default: "false" },
+          { name: "dms_only", type: "boolean", description: "Only 1:1 (DM) chats", default: "false" },
+          { name: "unread_only", type: "boolean", description: "Only chats with unread_count > 0", default: "false" },
+          { name: "exclude_types", type: "string[]", description: "Message types to exclude", default: '["reaction","poll_update"]' },
+          { name: "min_messages", type: "number", description: "Drop chats with fewer than this many messages in the window", default: "1" },
+          { name: "mode", type: "summary | firehose | rendered", description: "Output shape", default: "summary" },
+          { name: "timezone", type: "string", description: "IANA timezone for today/yesterday boundaries and rendered output", default: "UTC" },
+          { name: "limit", type: "number", description: "Caps firehose results and rendered chat count (max 500)", default: "50" },
+        ],
+      },
+      {
+        method: "TOOL",
+        path: "get_conversation",
+        description:
+          "Fetch messages from a chat and render them as markdown — either the last N messages or a window centered on an anchor (message ID or timestamp). Same compact format as /api/export.",
+        params: [
+          { name: "chat", type: "string", required: true, description: "Chat name or JID" },
+          { name: "around_message_id", type: "string", description: "Center the window on this message; pair with window_minutes" },
+          { name: "around_timestamp", type: "string", description: "Center the window on this timestamp (ISO or unix); pair with window_minutes" },
+          { name: "last_n", type: "number", description: "Fetch the last N messages. Mutually exclusive with around_* anchors (max 500)" },
+          { name: "window_minutes", type: "number", description: "Span (minutes) on either side of the anchor (max 1440)", default: "60" },
+          { name: "timezone", type: "string", description: "IANA timezone for date/time formatting", default: "UTC" },
+          { name: "include_id", type: "boolean", description: "Append #message_id to each line", default: "false" },
+          { name: "include_reactions", type: "boolean", description: "Attach reactions inline under each target message", default: "true" },
+          { name: "include_quoted", type: "boolean", description: "Show a preview of quoted messages above replies", default: "true" },
+        ],
+      },
+      {
+        method: "TOOL",
+        path: "get_message",
+        description:
+          "Fetch a single message by ID with full context: chat, sender, body, media, reactions, and the quoted message preview if any.",
+        params: [
+          { name: "message_id", type: "string", required: true, description: "Message ID (the id / #xxxx reference returned by other tools)" },
+        ],
+      },
+      {
+        method: "TOOL",
+        path: "get_thread",
+        description:
+          "Walk the quote chain backward from a message, following quoted_id up to depth levels. Returns the chain rendered as markdown with message IDs.",
+        params: [
+          { name: "message_id", type: "string", required: true, description: "Starting message ID; the walk follows quoted_id pointers" },
+          { name: "depth", type: "number", description: "Max number of hops to follow (max 20)", default: "5" },
+        ],
+      },
+      {
+        method: "TOOL",
+        path: "chat_summary",
+        description:
+          "High-density activity report for a single chat over the last N days: total messages, top participants, peak hour of day, message-type breakdown, media count, and top reactions.",
+        params: [
+          { name: "chat", type: "string", required: true, description: "Chat name or JID. Use resolve_contact first for ambiguous names" },
+          { name: "days", type: "number", description: "Window size in days (max 365)", default: "7" },
+          { name: "timezone", type: "string", description: "IANA timezone used for the peak-hour bucket", default: "UTC" },
+        ],
+      },
+      {
+        method: "TOOL",
+        path: "list_media",
+        description:
+          "Browse media attachments (image, video, audio, document, sticker) across one or all chats, optionally filtered by type or time window. Returns metadata only — fetch bytes via /api/media/:id/download.",
+        params: [
+          { name: "chat", type: "string", description: "Chat name or JID. Omit to search across all chats" },
+          { name: "types", type: "string[]", description: "Media kinds to include (image, video, audio, document, sticker)" },
+          { name: "after", type: "string", description: "Lower bound — ISO 8601 string or unix seconds" },
+          { name: "before", type: "string", description: "Upper bound — ISO 8601 string or unix seconds" },
+          { name: "limit", type: "number", description: "Max media items to return (max 100)", default: "30" },
+        ],
+      },
+      {
+        method: "TOOL",
+        path: "export_conversation",
+        description:
+          "Render one or more chats into markdown, text, or JSON using the same export pipeline as /api/export, returned inline. Use preset=concise for a tight transcript, llm for a balanced view, archive for everything.",
+        params: [
+          { name: "chat", type: "string", description: "Single chat name or JID. Either chat or chats is required" },
+          { name: "chats", type: "string[]", description: "Multiple chats (names or JIDs). Mutually exclusive with chat (1–50)" },
+          { name: "days", type: "number", description: "Window size in days, ending now. Overridden by from/to (max 365)" },
+          { name: "from", type: "string", description: "Window start — ISO 8601 string or unix seconds" },
+          { name: "to", type: "string", description: "Window end — ISO 8601 string or unix seconds" },
+          { name: "preset", type: "concise | full | llm | archive", description: "Field bundle for each message", default: "llm" },
+          { name: "format", type: "md | txt | json", description: "Output format (no zip — binary is not returnable via MCP)", default: "md" },
+          { name: "max_messages", type: "number", description: "Hard ceiling on total messages across all chats (max 10000)", default: "5000" },
+          { name: "timezone", type: "string", description: "IANA timezone for date/time labels", default: "UTC" },
+        ],
+      },
+      {
+        method: "TOOL",
+        path: "send_message",
+        description:
+          "WRITE — Send a WhatsApp message (text, media, or location) to a chat. Requires an explicit JID (resolve names with resolve_contact first). Media kinds need a media_url; use kind=location with the location object.",
+        notes:
+          "Write tool (readOnlyHint: false). MCP clients should confirm with the user before invoking. Targeting requires a literal JID — fuzzy name matching is intentionally not supported here.",
+        params: [
+          { name: "jid", type: "string", required: true, description: "Target JID (e.g. 5511999999999@s.whatsapp.net or ...@g.us)" },
+          { name: "kind", type: "text | image | video | audio | document | location", description: "Message kind. Inferred when omitted; required for media" },
+          { name: "text", type: "string", description: "Text body, or caption for image/video/document media" },
+          { name: "media_url", type: "string", description: "HTTPS URL to fetch media from. Required for image/video/audio/document" },
+          { name: "filename", type: "string", description: "Filename for documents. Required when kind=document" },
+          { name: "mime_type", type: "string", description: "MIME type override. Required for kind=document" },
+          { name: "location", type: "object", description: "{ lat, lng, name?, address? } — used when kind=location" },
+          { name: "quoted_message_id", type: "string", description: "ID of the message to quote/reply to (text only)" },
+        ],
+      },
+      {
+        method: "TOOL",
+        path: "react_to_message",
+        description:
+          "WRITE — Add, replace, or remove a reaction emoji on a specific message. Pass an empty string for emoji to remove an existing reaction. Idempotent.",
+        notes:
+          "Write tool (readOnlyHint: false). MCP clients should confirm with the user before invoking. Targeting requires a literal JID — use resolve_contact first.",
+        params: [
+          { name: "jid", type: "string", required: true, description: "JID of the chat where the message lives" },
+          { name: "message_id", type: "string", required: true, description: "ID of the message to react to (the key.id of the target)" },
+          { name: "emoji", type: "string", required: true, description: 'Reaction emoji (e.g. "👍"). Empty string removes the reaction' },
+        ],
+      },
+    ],
+  },
 ]
 
 const WEBHOOK_EVENTS = [
@@ -950,6 +1164,7 @@ const METHOD_STYLES: Record<HttpMethod, { bg: string; text: string; border: stri
   PUT: { bg: "bg-amber-500/10", text: "text-amber-400", border: "border-amber-500/20" },
   DELETE: { bg: "bg-red-500/10", text: "text-red-400", border: "border-red-500/20" },
   WS: { bg: "bg-purple-500/10", text: "text-purple-400", border: "border-purple-500/20" },
+  TOOL: { bg: "bg-teal-500/10", text: "text-teal-400", border: "border-teal-500/20" },
 }
 
 function MethodBadge({ method }: { method: HttpMethod }) {
@@ -1177,7 +1392,7 @@ export function ApiDocsPage() {
               <h1 className="text-2xl font-semibold tracking-tight">API Documentation</h1>
             </div>
             <p className="text-sm text-muted-foreground">
-              Complete reference for the WhatsApp Hub REST API &middot; {totalEndpoints} endpoints
+              Complete reference for the WhatsApp Hub REST API &amp; MCP server &middot; {totalEndpoints} endpoints &amp; tools
             </p>
           </div>
           <div className="flex items-center gap-2 shrink-0">
