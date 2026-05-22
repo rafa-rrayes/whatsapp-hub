@@ -15,15 +15,20 @@ import {
   Heart,
   Shield,
   BookOpen,
-  Download,
 } from "lucide-react"
-import { Button } from "@/components/ui/button"
+import { ExportMarkdownMenu } from "@/components/export-md-menu"
 import {
   type EndpointGroup,
   MethodBadge,
   CodeBlock,
   EndpointCard,
 } from "@/components/api-docs/endpoint"
+
+async function fetchApiMarkdown(): Promise<string> {
+  const res = await fetch("/api/openapi.md")
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.text()
+}
 
 // ---------------------------------------------------------------------------
 // Data
@@ -904,6 +909,18 @@ const WEBHOOK_EVENTS = [
   { event: "wa.messaging-history.set", description: "Initial history sync completed" },
 ]
 
+// Searchable keywords for the static (non-API_SECTIONS) cards, so the search
+// box can hide them when they don't match the query.
+const STATIC_SECTION_KEYWORDS: Record<string, string> = {
+  authentication: "authentication auth api key bearer oauth token",
+  "base-url": "base url versioning version v1",
+  websocket: "websocket ws real-time realtime ticket streaming events",
+  "webhook-events": "webhook events reference event payload",
+  security: "security configuration hardening headers",
+  health: "health check status uptime",
+}
+const STATIC_SECTION_IDS = Object.keys(STATIC_SECTION_KEYWORDS)
+
 // ---------------------------------------------------------------------------
 // Main Page
 // ---------------------------------------------------------------------------
@@ -928,6 +945,18 @@ export function ApiDocsPage() {
   }, [search])
 
   const totalEndpoints = API_SECTIONS.reduce((sum, s) => sum + s.endpoints.length, 0)
+
+  // Search also covers the static informational sections (which aren't part of
+  // API_SECTIONS) so a query doesn't leave unrelated cards on screen.
+  const query = search.trim().toLowerCase()
+  const staticVisible = (id: string) =>
+    !query || (STATIC_SECTION_KEYWORDS[id]?.includes(query) ?? false)
+  const visibleSectionIds = useMemo(
+    () => new Set(filteredSections.map((s) => s.id)),
+    [filteredSections]
+  )
+  const anyStaticVisible = STATIC_SECTION_IDS.some(staticVisible)
+  const hasResults = filteredSections.length > 0 || anyStaticVisible
 
   useEffect(() => {
     const observer = new IntersectionObserver(
@@ -962,7 +991,7 @@ export function ApiDocsPage() {
     { id: "webhook-events", label: "Webhook Events" },
     { id: "security", label: "Security" },
     { id: "health", label: "Health Check" },
-  ]
+  ].filter((item) => visibleSectionIds.has(item.id) || staticVisible(item.id))
 
   return (
     <div className="flex gap-6">
@@ -980,20 +1009,7 @@ export function ApiDocsPage() {
             </p>
           </div>
           <div className="flex items-center gap-2 shrink-0">
-            <Button
-              asChild
-              variant="outline"
-              size="sm"
-              className="h-8 text-xs gap-1.5"
-            >
-              <a
-                href="/api/openapi.md?download=1"
-                download="whatsapp-hub-api.md"
-              >
-                <Download className="h-3.5 w-3.5" />
-                Download .md
-              </a>
-            </Button>
+            <ExportMarkdownMenu filename="whatsapp-hub-api.md" getMarkdown={fetchApiMarkdown} />
             <div className="relative w-64">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/50" />
               <Input
@@ -1007,6 +1023,7 @@ export function ApiDocsPage() {
         </div>
 
         {/* Authentication */}
+        {staticVisible("authentication") && (
         <div
           id="authentication"
           ref={(el) => { sectionRefs.current["authentication"] = el }}
@@ -1048,8 +1065,10 @@ curl "http://localhost:3100/api/connection/status?api_key=YOUR_KEY"`}
             </CardContent>
           </Card>
         </div>
+        )}
 
         {/* Base URL */}
+        {staticVisible("base-url") && (
         <div
           id="base-url"
           ref={(el) => { sectionRefs.current["base-url"] = el }}
@@ -1073,6 +1092,7 @@ curl "http://localhost:3100/api/connection/status?api_key=YOUR_KEY"`}
             </CardContent>
           </Card>
         </div>
+        )}
 
         {/* Endpoint Sections */}
         {filteredSections.map((section) => (
@@ -1109,7 +1129,19 @@ curl "http://localhost:3100/api/connection/status?api_key=YOUR_KEY"`}
           </div>
         ))}
 
+        {/* No results */}
+        {query && !hasResults && (
+          <Card className="py-0">
+            <CardContent className="px-5 py-12 text-center">
+              <p className="text-sm text-muted-foreground">
+                No results for &ldquo;{search.trim()}&rdquo;.
+              </p>
+            </CardContent>
+          </Card>
+        )}
+
         {/* WebSocket */}
+        {staticVisible("websocket") && (
         <div
           id="websocket"
           ref={(el) => { sectionRefs.current["websocket"] = el }}
@@ -1283,8 +1315,10 @@ wscat -c "ws://localhost:3100/ws" -H "x-api-key: YOUR_KEY"`} />
             </CardContent>
           </Card>
         </div>
+        )}
 
         {/* Webhook Events Reference */}
+        {staticVisible("webhook-events") && (
         <div
           id="webhook-events"
           ref={(el) => { sectionRefs.current["webhook-events"] = el }}
@@ -1356,8 +1390,10 @@ const isValid = req.headers["x-hub-signature"] === "sha256=" + signature;`}
             </CardContent>
           </Card>
         </div>
+        )}
 
         {/* Security Configuration */}
+        {staticVisible("security") && (
         <div
           id="security"
           ref={(el) => { sectionRefs.current["security"] = el }}
@@ -1424,8 +1460,10 @@ const isValid = req.headers["x-hub-signature"] === "sha256=" + signature;`}
             </CardContent>
           </Card>
         </div>
+        )}
 
         {/* Health Check */}
+        {staticVisible("health") && (
         <div
           id="health"
           ref={(el) => { sectionRefs.current["health"] = el }}
@@ -1453,6 +1491,7 @@ const isValid = req.headers["x-hub-signature"] === "sha256=" + signature;`}
             </div>
           </Card>
         </div>
+        )}
       </div>
 
       {/* Right-side navigation */}

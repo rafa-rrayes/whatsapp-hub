@@ -1,15 +1,8 @@
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import {
-  DropdownMenu,
-  DropdownMenuTrigger,
-  DropdownMenuContent,
-  DropdownMenuItem,
-} from "@/components/ui/dropdown-menu"
-import { Plug, Lock, Compass, Search, BarChart3, Send, Download, Copy, ChevronDown } from "lucide-react"
+import { ExportMarkdownMenu } from "@/components/export-md-menu"
+import { Plug, Lock, Compass, Search, BarChart3, Send } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
-import { toast } from "sonner"
 import {
   type Endpoint,
   MethodBadge,
@@ -349,28 +342,6 @@ function buildMcpMarkdown(): string {
   return out.join("\n")
 }
 
-async function copyMcpMarkdown() {
-  try {
-    await navigator.clipboard.writeText(buildMcpMarkdown())
-    toast.success("Copied MCP docs to clipboard")
-  } catch {
-    toast.error("Failed to copy to clipboard")
-  }
-}
-
-function downloadMcpMarkdown() {
-  const blob = new Blob([buildMcpMarkdown()], { type: "text/markdown" })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement("a")
-  a.href = url
-  a.download = MCP_MD_FILENAME
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-  setTimeout(() => URL.revokeObjectURL(url), 1000)
-  toast.success(`Downloaded ${MCP_MD_FILENAME}`)
-}
-
 // ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
@@ -390,25 +361,7 @@ export function McpPage() {
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" className="h-8 text-xs gap-1.5">
-                <Download className="h-3.5 w-3.5" />
-                Export as MD
-                <ChevronDown className="h-3.5 w-3.5 opacity-60" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem onSelect={() => void copyMcpMarkdown()}>
-                <Copy className="h-3.5 w-3.5" />
-                Copy to clipboard
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={downloadMcpMarkdown}>
-                <Download className="h-3.5 w-3.5" />
-                Download .md
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <ExportMarkdownMenu filename={MCP_MD_FILENAME} getMarkdown={buildMcpMarkdown} />
         </div>
       </div>
 
