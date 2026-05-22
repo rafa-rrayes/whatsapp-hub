@@ -37,6 +37,8 @@ function buildMessage(msg: SelectedMessage, ctx: ExportContext) {
       height: mr?.height || msg.media_height || null,
       duration: mr?.duration || msg.media_duration || null,
       download_status: mr?.download_status || null,
+      transcription: msg.media_transcription || null,
+      transcription_status: msg.media_transcription_status || null,
       url: mr?.download_status === 'downloaded' && ctx.options.media === 'ref'
         ? `${ctx.baseUrl}/api/media/${msg.media_id}/download`
         : null,

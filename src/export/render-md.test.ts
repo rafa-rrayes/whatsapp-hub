@@ -142,6 +142,38 @@ describe('renderMarkdown', () => {
     expect(md).toMatch(/\*\*Me:\*\* Olá!/);
   });
 
+  it('appends the AI transcription to an audio media message', () => {
+    const chat = makeChat('111@s.whatsapp.net', 'Mom');
+    const msg = makeMsg({
+      id: 'm1', remote_jid: '111@s.whatsapp.net', from_me: 1,
+      timestamp: 1_700_000_000, has_media: 1, media_mime_type: 'audio/ogg; codecs=opus',
+      media_transcription: 'Alô, testando.',
+    });
+    const ctx = makeContext();
+    const md = renderMarkdown(
+      [{ chat, message_count: 1 }],
+      new Map([[chat.jid, [msg]]]),
+      ctx
+    );
+    expect(md).toMatch(/\*\[audio\]\*.*_\(transcript: Alô, testando\.\)_/);
+  });
+
+  it('labels an image transcription as a description', () => {
+    const chat = makeChat('111@s.whatsapp.net', 'Mom');
+    const msg = makeMsg({
+      id: 'm1', remote_jid: '111@s.whatsapp.net', from_me: 1,
+      timestamp: 1_700_000_000, has_media: 1, media_mime_type: 'image/jpeg',
+      media_transcription: 'A photo of a sunset over the ocean.',
+    });
+    const ctx = makeContext();
+    const md = renderMarkdown(
+      [{ chat, message_count: 1 }],
+      new Map([[chat.jid, [msg]]]),
+      ctx
+    );
+    expect(md).toMatch(/_\(description: A photo of a sunset over the ocean\.\)_/);
+  });
+
   it('marks deleted messages with strikethrough', () => {
     const chat = makeChat('111@s.whatsapp.net', 'Mom');
     const msg = makeMsg({

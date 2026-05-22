@@ -179,6 +179,7 @@ export function selectMessages(jid: string, window: ResolvedTimeWindow, opts: Ex
            edit_type, edited_at, is_deleted, deleted_at,
            has_media, media_id, media_mime_type, media_size, media_filename,
            media_duration, media_width, media_height,
+           media_transcription, media_transcription_status,
            reaction_emoji, reaction_target_id, poll_name, poll_options,
            latitude, longitude, location_name, location_address,
            created_at

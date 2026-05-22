@@ -21,8 +21,15 @@ function bodyForMessage(msg: SelectedMessage, ctx: ExportContext): string {
   if (msg.has_media === 1) {
     const mt = (msg.media_mime_type || '').split('/')[0] || 'media';
     const name = msg.media_filename ? `: ${msg.media_filename}` : '';
+    const parts = [`[${mt}${name}]`];
     const body = applyPrivacyToBody(msg.body, ctx);
-    return body ? `[${mt}${name}] ${body}` : `[${mt}${name}]`;
+    if (body) parts.push(body);
+    const transcription = applyPrivacyToBody(msg.media_transcription, ctx);
+    if (transcription) {
+      const label = mt === 'audio' ? 'transcript' : 'description';
+      parts.push(`(${label}: ${transcription})`);
+    }
+    return parts.join(' ');
   }
   if (msg.latitude !== undefined && msg.latitude !== null) {
     return `[location${msg.location_name ? `: ${msg.location_name}` : ''}]`;

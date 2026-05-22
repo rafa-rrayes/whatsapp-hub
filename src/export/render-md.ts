@@ -234,6 +234,19 @@ function renderMediaPlaceholder(msg: SelectedMessage, ctx: ExportContext): strin
   return null;
 }
 
+/** AI transcription/description suffix for a media message, or null if none. */
+function transcriptionSuffix(msg: SelectedMessage, ctx: ExportContext): string | null {
+  const raw = msg.media_transcription;
+  if (!raw) return null;
+  const redacted = applyPrivacyToBody(raw, ctx) || '';
+  // Flatten and escape so it can't break the surrounding italic markdown.
+  const text = redacted.replace(/\r?\n/g, ' ').replace(/[\[\]*_`]/g, (m) => `\\${m}`).trim();
+  if (!text) return null;
+  const cat = mediaCategory(msg.media_row?.mime_type || msg.media_mime_type);
+  const label = cat === 'audio' ? 'transcript' : 'description';
+  return `_(${label}: ${text})_`;
+}
+
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -313,10 +326,14 @@ function renderMessageBody(msg: SelectedMessage, ctx: ExportContext): string {
   }
   lines.push(mainLine);
 
-  // Media (if any)
+  // Media (if any), with the AI transcription/description appended inline.
   if (fields.has('media')) {
-    const mediaBlock = renderMediaPlaceholder(msg, ctx);
-    if (mediaBlock) lines.push(mediaBlock);
+    let mediaBlock = renderMediaPlaceholder(msg, ctx);
+    if (mediaBlock) {
+      const transcript = transcriptionSuffix(msg, ctx);
+      if (transcript) mediaBlock = `${mediaBlock} ${transcript}`;
+      lines.push(mediaBlock);
+    }
   }
 
   // Inline reactions
