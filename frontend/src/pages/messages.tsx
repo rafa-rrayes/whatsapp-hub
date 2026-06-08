@@ -1,5 +1,6 @@
 import { useState } from "react"
-import { useMessages } from "@/hooks/use-api"
+import { useMessages, useSyncAllHistory, useSyncChatHistory } from "@/hooks/use-api"
+import { toast } from "sonner"
 import { useAuthStore } from "@/stores/auth"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -26,7 +27,7 @@ import { JsonViewer } from "@/components/json-viewer"
 import { MessagesPerDayChart } from "@/components/charts/messages-per-day"
 import { MessagesByTypeChart } from "@/components/charts/messages-by-type"
 import { TopChatsChart } from "@/components/charts/top-chats"
-import { ChevronLeft, ChevronRight, Search, X } from "lucide-react"
+import { ChevronLeft, ChevronRight, Search, X, History, DownloadCloud, Loader2 } from "lucide-react"
 import { formatTimestamp, truncate } from "@/lib/utils"
 import { useContactMap, resolveJid } from "@/hooks/use-contact-map"
 import type { MessageQueryParams } from "@/hooks/use-api"
@@ -41,6 +42,8 @@ export function MessagesPage() {
   const [search, setSearch] = useState("")
   const [expandedRow, setExpandedRow] = useState<string | null>(null)
   const apiKey = useAuthStore((s) => s.apiKey)
+  const syncAllHistory = useSyncAllHistory()
+  const syncChatHistory = useSyncChatHistory()
 
   const { data, isLoading } = useMessages({ ...params, search: search || undefined })
 
@@ -141,6 +144,55 @@ export function MessagesPage() {
                     <SelectItem value="false">No media</SelectItem>
                   </SelectContent>
                 </Select>
+
+                {params.chat && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-9"
+                    onClick={() =>
+                      syncChatHistory.mutate(
+                        { jid: params.chat as string },
+                        {
+                          onSuccess: () =>
+                            toast.success("Requested — older messages will appear shortly"),
+                          onError: (e) => toast.error(e.message),
+                        }
+                      )
+                    }
+                    disabled={syncChatHistory.isPending}
+                  >
+                    {syncChatHistory.isPending ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
+                    ) : (
+                      <History className="h-3.5 w-3.5 mr-1.5" />
+                    )}
+                    Load older
+                  </Button>
+                )}
+
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-9"
+                  onClick={() =>
+                    syncAllHistory.mutate(undefined, {
+                      onSuccess: (result) =>
+                        toast.success(
+                          `Sync started: ${result.requested} requested, ${result.skipped} skipped (${result.total} total)`
+                        ),
+                      onError: (e) => toast.error(e.message),
+                    })
+                  }
+                  disabled={syncAllHistory.isPending}
+                >
+                  {syncAllHistory.isPending ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
+                  ) : (
+                    <DownloadCloud className="h-3.5 w-3.5 mr-1.5" />
+                  )}
+                  Sync all history
+                </Button>
               </div>
             </CardContent>
           </Card>

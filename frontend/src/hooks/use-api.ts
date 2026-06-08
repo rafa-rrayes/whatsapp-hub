@@ -118,6 +118,29 @@ export function useChats(params?: { search?: string; limit?: number }) {
   })
 }
 
+export function useSyncChatHistory() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ jid, count }: { jid: string; count?: number }) =>
+      api.post<{ success: boolean; jid: string; requestId: string; cursor: unknown }>(
+        `/api/chats/${encodeURIComponent(jid)}/sync-history`,
+        count !== undefined ? { count } : undefined
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["messages"] }),
+  })
+}
+
+export function useSyncAllHistory() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () =>
+      api.post<{ success: boolean; requested: number; skipped: number; total: number }>(
+        "/api/chats/sync-history"
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["messages"] }),
+  })
+}
+
 // ─── Contacts ─────────────────────────────────────────────────
 
 export function useContacts(search?: string) {

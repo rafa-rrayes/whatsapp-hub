@@ -199,4 +199,27 @@ describe('messagesRepo', () => {
       expect(row!.raw_message).toBe('{"key":"value"}');
     });
   });
+
+  describe('getOldestForChat', () => {
+    const jid = '5511888888888@s.whatsapp.net';
+
+    it('returns the chronologically oldest message for the chat (the history-sync anchor)', () => {
+      messagesRepo.upsert(makeMessage({ id: 'newer', remote_jid: jid, timestamp: 3000 }));
+      messagesRepo.upsert(makeMessage({ id: 'oldest', remote_jid: jid, timestamp: 1000, from_me: 1, participant: 'p@s.whatsapp.net' }));
+      messagesRepo.upsert(makeMessage({ id: 'middle', remote_jid: jid, timestamp: 2000 }));
+      // A message in a different chat must be ignored.
+      messagesRepo.upsert(makeMessage({ id: 'other', remote_jid: 'other@s.whatsapp.net', timestamp: 1 }));
+
+      const oldest = messagesRepo.getOldestForChat(jid);
+      expect(oldest).toBeDefined();
+      expect(oldest!.id).toBe('oldest');
+      expect(oldest!.timestamp).toBe(1000);
+      expect(!!oldest!.from_me).toBe(true);
+      expect(oldest!.participant).toBe('p@s.whatsapp.net');
+    });
+
+    it('returns undefined when the chat has no stored messages', () => {
+      expect(messagesRepo.getOldestForChat('nobody@s.whatsapp.net')).toBeUndefined();
+    });
+  });
 });

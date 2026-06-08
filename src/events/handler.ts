@@ -133,131 +133,147 @@ function getMediaInfo(msg: proto.IMessage | null | undefined) {
   };
 }
 
+/**
+ * Map a WAMessage into the DB upsert payload and persist it (plus chat/group/contact
+ * side-effects). Shared by the live `messages.upsert` path and the history-sync path.
+ *
+ * `opts.queueMedia` gates whether media downloads are queued: true for live messages,
+ * false for history sync (historical media keys are usually expired — metadata only).
+ * Returns false when the message was skipped (no key, or protocol message).
+ */
+function persistMessage(msg: WAMessage, opts: { queueMedia: boolean }): boolean {
+  const key = msg.key;
+  if (!key?.id || !key?.remoteJid) return false;
+
+  // Normalize LID ↔ phone JID: always prefer @s.whatsapp.net
+  const remoteJid = normalizeJid(key.remoteJid, key.remoteJidAlt);
+
+  const innerMsg = msg.message;
+  const msgType = getMessageType(innerMsg);
+
+  // Skip protocol messages (read receipts, etc.)
+  if (msgType === 'protocol') return false;
+
+  const mediaInfo = getMediaInfo(innerMsg);
+  let mediaId: string | undefined;
+
+  if (hasMedia(innerMsg)) {
+    mediaId = uuid();
+    if (opts.queueMedia) {
+      mediaManager.queueDownload(mediaId, msg);
+    }
+  }
+
+  // Handle reactions specially
+  const reaction = innerMsg?.reactionMessage;
+  const location = innerMsg?.locationMessage || innerMsg?.liveLocationMessage;
+
+  // Handle quoted messages
+  const contextInfo =
+    innerMsg?.extendedTextMessage?.contextInfo ||
+    innerMsg?.imageMessage?.contextInfo ||
+    innerMsg?.videoMessage?.contextInfo ||
+    innerMsg?.audioMessage?.contextInfo ||
+    innerMsg?.documentMessage?.contextInfo;
+
+  // Normalize from_jid (resolve LID → phone where possible)
+  const rawFromJid = key.fromMe ? undefined : (key.participant || remoteJid);
+  const fromJid = rawFromJid ? resolveToPhoneJid(rawFromJid) : undefined;
+
+  messagesRepo.upsert({
+    id: key.id,
+    remote_jid: remoteJid,
+    from_jid: fromJid,
+    from_me: key.fromMe ? 1 : 0,
+    participant: key.participant || undefined,
+    timestamp: typeof msg.messageTimestamp === 'number'
+      ? msg.messageTimestamp
+      : Number(msg.messageTimestamp),
+    push_name: msg.pushName || undefined,
+    message_type: msgType,
+    body: extractTextBody(innerMsg),
+    quoted_id: contextInfo?.stanzaId || undefined,
+    quoted_body: contextInfo?.quotedMessage
+      ? extractTextBody(contextInfo.quotedMessage)
+      : undefined,
+    is_forwarded: contextInfo?.isForwarded ? 1 : 0,
+    forward_score: contextInfo?.forwardingScore || 0,
+    is_broadcast: remoteJid?.endsWith('@broadcast') ? 1 : 0,
+    has_media: hasMedia(innerMsg) ? 1 : 0,
+    media_id: mediaId,
+    media_mime_type: mediaInfo.mime_type,
+    media_size: mediaInfo.size,
+    media_filename: mediaInfo.filename,
+    media_duration: mediaInfo.duration,
+    media_width: mediaInfo.width,
+    media_height: mediaInfo.height,
+    reaction_emoji: reaction?.text || undefined,
+    reaction_target_id: reaction?.key?.id || undefined,
+    poll_name: innerMsg?.pollCreationMessage?.name || innerMsg?.pollCreationMessageV2?.name || undefined,
+    poll_options: innerMsg?.pollCreationMessage?.options
+      ? JSON.stringify(innerMsg.pollCreationMessage.options.map((o) => o.optionName))
+      : undefined,
+    latitude: location?.degreesLatitude || undefined,
+    longitude: location?.degreesLongitude || undefined,
+    location_name: innerMsg?.locationMessage?.name || undefined,
+    location_address: innerMsg?.locationMessage?.address || undefined,
+    raw_message: JSON.stringify(msg),
+  });
+
+  // Update chat metadata
+  const textBody = extractTextBody(innerMsg);
+  chatsRepo.upsert({
+    jid: remoteJid,
+    is_group: isJidGroup(remoteJid) ? 1 : 0,
+    last_message_ts: typeof msg.messageTimestamp === 'number'
+      ? msg.messageTimestamp
+      : Number(msg.messageTimestamp),
+    last_message_body: textBody?.slice(0, 200),
+  });
+
+  // Ensure group exists in groups table when we receive a group message
+  if (isJidGroup(remoteJid)) {
+    const existing = groupsRepo.getByJid(remoteJid);
+    if (!existing) {
+      groupsRepo.upsert({
+        jid: remoteJid,
+        participant_count: 0,
+      });
+      // Try to fetch full metadata asynchronously
+      fetchGroupMetadataAsync(remoteJid);
+    }
+  }
+
+  // Update contact from push name (use normalized JID)
+  if (msg.pushName && (key.participant || (!key.fromMe && remoteJid))) {
+    const rawContactJid = key.participant || remoteJid;
+    const contactJid = resolveToPhoneJid(rawContactJid);
+    if (!isJidGroup(contactJid)) {
+      contactsRepo.upsert({
+        jid: contactJid,
+        notify_name: msg.pushName,
+      });
+    }
+  }
+
+  eventsRepo.log('message.received', {
+    id: key.id,
+    jid: eventJid(remoteJid),
+    type: msgType,
+    fromMe: key.fromMe,
+  });
+
+  return true;
+}
+
 export function registerEventHandlers(): void {
   // ===== MESSAGES =====
   eventBus.on('wa.messages.upsert', (event) => {
-    const { type, messages } = event.data as BaileysEventMap['messages.upsert'];
+    const { messages } = event.data as BaileysEventMap['messages.upsert'];
 
     for (const msg of messages) {
       try {
-        const key = msg.key;
-        if (!key?.id || !key?.remoteJid) continue;
-
-        // Normalize LID ↔ phone JID: always prefer @s.whatsapp.net
-        const remoteJid = normalizeJid(key.remoteJid, key.remoteJidAlt);
-
-        const innerMsg = msg.message;
-        const msgType = getMessageType(innerMsg);
-
-        // Skip protocol messages (read receipts, etc.)
-        if (msgType === 'protocol') continue;
-
-        const mediaInfo = getMediaInfo(innerMsg);
-        let mediaId: string | undefined;
-
-        if (hasMedia(innerMsg)) {
-          mediaId = uuid();
-          mediaManager.queueDownload(mediaId, msg);
-        }
-
-        // Handle reactions specially
-        const reaction = innerMsg?.reactionMessage;
-        const location = innerMsg?.locationMessage || innerMsg?.liveLocationMessage;
-
-        // Handle quoted messages
-        const contextInfo =
-          innerMsg?.extendedTextMessage?.contextInfo ||
-          innerMsg?.imageMessage?.contextInfo ||
-          innerMsg?.videoMessage?.contextInfo ||
-          innerMsg?.audioMessage?.contextInfo ||
-          innerMsg?.documentMessage?.contextInfo;
-
-        // Normalize from_jid (resolve LID → phone where possible)
-        const rawFromJid = key.fromMe ? undefined : (key.participant || remoteJid);
-        const fromJid = rawFromJid ? resolveToPhoneJid(rawFromJid) : undefined;
-
-        messagesRepo.upsert({
-          id: key.id,
-          remote_jid: remoteJid,
-          from_jid: fromJid,
-          from_me: key.fromMe ? 1 : 0,
-          participant: key.participant || undefined,
-          timestamp: typeof msg.messageTimestamp === 'number'
-            ? msg.messageTimestamp
-            : Number(msg.messageTimestamp),
-          push_name: msg.pushName || undefined,
-          message_type: msgType,
-          body: extractTextBody(innerMsg),
-          quoted_id: contextInfo?.stanzaId || undefined,
-          quoted_body: contextInfo?.quotedMessage
-            ? extractTextBody(contextInfo.quotedMessage)
-            : undefined,
-          is_forwarded: contextInfo?.isForwarded ? 1 : 0,
-          forward_score: contextInfo?.forwardingScore || 0,
-          is_broadcast: remoteJid?.endsWith('@broadcast') ? 1 : 0,
-          has_media: hasMedia(innerMsg) ? 1 : 0,
-          media_id: mediaId,
-          media_mime_type: mediaInfo.mime_type,
-          media_size: mediaInfo.size,
-          media_filename: mediaInfo.filename,
-          media_duration: mediaInfo.duration,
-          media_width: mediaInfo.width,
-          media_height: mediaInfo.height,
-          reaction_emoji: reaction?.text || undefined,
-          reaction_target_id: reaction?.key?.id || undefined,
-          poll_name: innerMsg?.pollCreationMessage?.name || innerMsg?.pollCreationMessageV2?.name || undefined,
-          poll_options: innerMsg?.pollCreationMessage?.options
-            ? JSON.stringify(innerMsg.pollCreationMessage.options.map((o) => o.optionName))
-            : undefined,
-          latitude: location?.degreesLatitude || undefined,
-          longitude: location?.degreesLongitude || undefined,
-          location_name: innerMsg?.locationMessage?.name || undefined,
-          location_address: innerMsg?.locationMessage?.address || undefined,
-          raw_message: JSON.stringify(msg),
-        });
-
-        // Update chat metadata
-        const textBody = extractTextBody(innerMsg);
-        chatsRepo.upsert({
-          jid: remoteJid,
-          is_group: isJidGroup(remoteJid) ? 1 : 0,
-          last_message_ts: typeof msg.messageTimestamp === 'number'
-            ? msg.messageTimestamp
-            : Number(msg.messageTimestamp),
-          last_message_body: textBody?.slice(0, 200),
-        });
-
-        // Ensure group exists in groups table when we receive a group message
-        if (isJidGroup(remoteJid)) {
-          const existing = groupsRepo.getByJid(remoteJid);
-          if (!existing) {
-            groupsRepo.upsert({
-              jid: remoteJid,
-              participant_count: 0,
-            });
-            // Try to fetch full metadata asynchronously
-            fetchGroupMetadataAsync(remoteJid);
-          }
-        }
-
-        // Update contact from push name (use normalized JID)
-        if (msg.pushName && (key.participant || (!key.fromMe && remoteJid))) {
-          const rawContactJid = key.participant || remoteJid;
-          const contactJid = resolveToPhoneJid(rawContactJid);
-          if (!isJidGroup(contactJid)) {
-            contactsRepo.upsert({
-              jid: contactJid,
-              notify_name: msg.pushName,
-            });
-          }
-        }
-
-        eventsRepo.log('message.received', {
-          id: key.id,
-          jid: eventJid(remoteJid),
-          type: msgType,
-          fromMe: key.fromMe,
-        });
+        persistMessage(msg, { queueMedia: true });
       } catch (err) {
         log.event.error({ err }, 'Error processing message');
       }
@@ -535,9 +551,9 @@ export function registerEventHandlers(): void {
 
   // ===== HISTORY SYNC =====
   eventBus.on('wa.messaging-history.set', (event) => {
-    const { chats, contacts, messages, isLatest } = event.data as BaileysEventMap['messaging-history.set'];
+    const { chats, contacts, messages, isLatest, syncType } = event.data as BaileysEventMap['messaging-history.set'];
     log.event.info(
-      { chats: chats?.length || 0, contacts: contacts?.length || 0, messages: messages?.length || 0, isLatest },
+      { chats: chats?.length || 0, contacts: contacts?.length || 0, messages: messages?.length || 0, isLatest, syncType },
       'History sync'
     );
 
@@ -591,11 +607,24 @@ export function registerEventHandlers(): void {
       }
     }
 
+    // Persist historical messages (metadata only — historical media keys are usually
+    // expired, so we skip media downloads). Protocol messages are skipped inside the helper.
+    if (messages) {
+      for (const msg of messages) {
+        try {
+          persistMessage(msg, { queueMedia: false });
+        } catch (err) {
+          log.event.error({ err }, 'Error processing history message');
+        }
+      }
+    }
+
     eventsRepo.log('history.sync', {
       chats: chats?.length || 0,
       contacts: contacts?.length || 0,
       messages: messages?.length || 0,
       isLatest,
+      syncType,
     });
   });
 

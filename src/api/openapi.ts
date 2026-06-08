@@ -18,6 +18,7 @@ import {
   groupDescriptionSchema,
   groupParticipantsSchema,
   exportRequestSchema,
+  syncHistorySchema,
 } from './schemas.js';
 
 function toJsonSchema(schema: z.ZodType): object {
@@ -353,6 +354,23 @@ export function generateOpenApiSpec(): object {
           tags: ['Chats'],
           parameters: [{ name: 'jid', in: 'path', required: true, schema: { type: 'string' } }],
           responses: { '200': ok, '404': notFound, '401': unauthorized },
+        },
+      },
+      '/chats/sync-history': {
+        post: {
+          summary: 'Request older history for all chats (bulk)',
+          description: 'Walks every stored chat and asks WhatsApp for older messages, anchored on the oldest message already stored per chat. Throttled server-side.',
+          tags: ['Chats'],
+          responses: { '200': ok, '401': unauthorized },
+        },
+      },
+      '/chats/{jid}/sync-history': {
+        post: {
+          summary: 'Request older history for a single chat',
+          tags: ['Chats'],
+          parameters: [{ name: 'jid', in: 'path', required: true, schema: { type: 'string' } }],
+          requestBody: jsonBody(syncHistorySchema),
+          responses: { '200': ok, '400': badRequest, '401': unauthorized },
         },
       },
       '/settings': {

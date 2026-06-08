@@ -27,8 +27,20 @@ export const chatsRepo = {
         is_muted = COALESCE(excluded.is_muted, chats.is_muted),
         mute_expiry = COALESCE(excluded.mute_expiry, chats.mute_expiry),
         unread_count = COALESCE(excluded.unread_count, chats.unread_count),
-        last_message_ts = COALESCE(excluded.last_message_ts, chats.last_message_ts),
-        last_message_body = COALESCE(excluded.last_message_body, chats.last_message_body),
+        -- last_message_* only move forward, so backfilling old history (which
+        -- upserts each historical message) never clobbers a chat's newest preview.
+        last_message_body = CASE
+          WHEN excluded.last_message_ts IS NOT NULL
+            AND (chats.last_message_ts IS NULL OR excluded.last_message_ts >= chats.last_message_ts)
+          THEN excluded.last_message_body
+          ELSE chats.last_message_body
+        END,
+        last_message_ts = CASE
+          WHEN excluded.last_message_ts IS NOT NULL
+            AND (chats.last_message_ts IS NULL OR excluded.last_message_ts >= chats.last_message_ts)
+          THEN excluded.last_message_ts
+          ELSE chats.last_message_ts
+        END,
         updated_at = datetime('now')
     `).run({
       jid: chat.jid,

@@ -1,11 +1,27 @@
 import { Router } from 'express';
 import { chatsRepo } from '../../database/repositories/chats.js';
 import { messagesRepo } from '../../database/repositories/messages.js';
+import { connectionManager } from '../../connection/manager.js';
 import { clampPagination, isValidJid } from '../../utils/security.js';
+import { validate } from '../middleware/validate.js';
+import { syncHistorySchema } from '../schemas.js';
 import { asyncHandler, NotFoundError, BadRequestError } from '../errors.js';
 import { toApiChat, toApiMessage } from '../../types/mappers.js';
 
 const router = Router();
+
+/**
+ * Request older message history for a single chat, anchored on the oldest
+ * message we already have stored (Baileys walks backwards from that cursor).
+ * Returns null when there's no stored message to anchor the cursor on.
+ */
+async function syncOneChat(jid: string, count: number) {
+  const oldest = messagesRepo.getOldestForChat(jid);
+  if (!oldest) return null;
+  const key = { remoteJid: jid, id: oldest.id, fromMe: !!oldest.from_me, participant: oldest.participant || undefined };
+  const requestId = await connectionManager.requestHistorySync(key, oldest.timestamp, count);
+  return { requestId, cursor: { id: oldest.id, timestamp: oldest.timestamp } };
+}
 
 // GET /api/chats — list all chats
 router.get('/', asyncHandler(async (req, res) => {
@@ -15,6 +31,26 @@ router.get('/', asyncHandler(async (req, res) => {
     offset: clampPagination(req.query.offset, 0, 100000),
   });
   res.json({ data: chats.map(toApiChat), total: chats.length });
+}));
+
+// POST /api/chats/sync-history — request older history for ALL chats (bulk).
+// Registered before the /:jid routes so the literal path isn't captured by :jid.
+router.post('/sync-history', asyncHandler(async (_req, res) => {
+  const count = 50;
+  const allChats = chatsRepo.getAll({ limit: 10000 });
+
+  let requested = 0;
+  let skipped = 0;
+
+  for (const chat of allChats) {
+    const result = await syncOneChat(chat.jid, count);
+    if (result) requested++;
+    else skipped++;
+    // Throttle so we don't flood WhatsApp with history requests.
+    await new Promise((r) => setTimeout(r, 600));
+  }
+
+  res.json({ success: true, requested, skipped, total: allChats.length });
 }));
 
 // GET /api/chats/:jid — single chat with recent messages
@@ -32,6 +68,19 @@ router.get('/:jid', asyncHandler(async (req, res) => {
     order: 'desc',
   });
   res.json({ ...toApiChat(chat), recent_messages: recentMessages.data.map(toApiMessage) });
+}));
+
+// POST /api/chats/:jid/sync-history — request older history for a single chat
+router.post('/:jid/sync-history', validate(syncHistorySchema), asyncHandler(async (req, res) => {
+  if (!isValidJid(req.params.jid)) {
+    throw new BadRequestError('Invalid JID format');
+  }
+  const count = req.body.count ?? 50;
+  const result = await syncOneChat(req.params.jid as string, count);
+  if (!result) {
+    throw new BadRequestError('No messages stored for this chat yet to anchor history sync');
+  }
+  res.json({ success: true, jid: req.params.jid, ...result });
 }));
 
 export default router;

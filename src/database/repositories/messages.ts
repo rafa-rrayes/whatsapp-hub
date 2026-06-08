@@ -235,6 +235,18 @@ export const messagesRepo = {
   },
 
   /**
+   * Oldest stored message for a chat, by timestamp. Selects discrete columns
+   * (not raw_message) so it works even when raw JSON is stripped. Used to build
+   * the cursor for requesting older history from WhatsApp.
+   */
+  getOldestForChat(jid: string): { id: string; from_me: number | boolean; timestamp: number; participant?: string } | undefined {
+    const db = getDb();
+    return db
+      .prepare('SELECT id, from_me, timestamp, participant FROM messages WHERE remote_jid = ? ORDER BY timestamp ASC LIMIT 1')
+      .get(jid) as { id: string; from_me: number | boolean; timestamp: number; participant?: string } | undefined;
+  },
+
+  /**
    * Store an AI transcription/description for a media message.
    * Kept separate from upsert so re-receiving the message never clobbers it.
    */

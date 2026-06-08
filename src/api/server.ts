@@ -318,6 +318,8 @@ export function createServer() {
         chats: {
           'GET /api/chats': 'List all chats',
           'GET /api/chats/:jid': 'Chat details with recent messages',
+          'POST /api/chats/sync-history': 'Request older history for all chats (bulk, throttled)',
+          'POST /api/chats/:jid/sync-history': 'Request older history for a single chat { count? }',
         },
         contacts: {
           'GET /api/contacts': 'List contacts (param: search)',

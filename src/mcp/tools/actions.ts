@@ -4,6 +4,8 @@ import type { McpTool } from '../types.js';
 import { jsonResult, errorResult } from '../types.js';
 import { isJid } from '../resolve.js';
 import { connectionManager } from '../../connection/manager.js';
+import { messagesRepo } from '../../database/repositories/messages.js';
+import { chatsRepo } from '../../database/repositories/chats.js';
 import { validateUrlForFetch } from '../../utils/security.js';
 import { config } from '../../config.js';
 
@@ -334,4 +336,120 @@ const reactToMessageTool: McpTool = {
   },
 };
 
-export const actionTools: McpTool[] = [sendMessageTool, reactToMessageTool];
+/**
+ * Request older chat history from WhatsApp, anchored on the oldest message we
+ * already have stored (Baileys walks backwards from that cursor). Mirrors the
+ * REST `syncOneChat` helper in src/api/routes/chats.ts so the two surfaces stay
+ * in lockstep. Returns null when there's no stored message to anchor on.
+ */
+async function syncOneChatHistory(jid: string, count: number) {
+  const oldest = messagesRepo.getOldestForChat(jid);
+  if (!oldest) return null;
+  const key = {
+    remoteJid: jid,
+    id: oldest.id,
+    fromMe: !!oldest.from_me,
+    participant: oldest.participant || undefined,
+  };
+  const requestId = await connectionManager.requestHistorySync(key, oldest.timestamp, count);
+  return { requestId, cursor: { id: oldest.id, timestamp: oldest.timestamp } };
+}
+
+const syncHistoryTool: McpTool = {
+  register(server: McpServer) {
+    server.registerTool(
+      'sync_history',
+      {
+        title: 'Sync older WhatsApp history',
+        description:
+          'Request older message history from WhatsApp, anchored on the oldest ' +
+          'message already stored locally (WhatsApp walks backwards from there). ' +
+          'Pass a `jid` to sync one chat; omit it to bulk-sync every chat (with ' +
+          'throttling). Older messages arrive ASYNCHRONOUSLY in the background — ' +
+          'they will not be in the response, but show up in subsequent searches/' +
+          'queries once WhatsApp delivers them. A chat with no stored messages ' +
+          'cannot be anchored and is skipped.',
+        inputSchema: {
+          jid: z
+            .string()
+            .optional()
+            .describe(
+              'Target chat JID to sync (e.g. "5511999999999@s.whatsapp.net" or ' +
+              '"...@g.us"). Omit to bulk-sync ALL chats. Use `resolve_contact` ' +
+              'to look up the JID for a name.',
+            ),
+          count: z
+            .number()
+            .int()
+            .min(1)
+            .max(500)
+            .optional()
+            .describe('How many older messages to request per chat (1–500, default 50).'),
+        },
+        annotations: {
+          readOnlyHint: false,
+          idempotentHint: false,
+          openWorldHint: true,
+          destructiveHint: false,
+        },
+      },
+      async ({ jid, count }) => {
+        const resolvedCount = count ?? 50;
+        try {
+          // Single-chat sync.
+          if (jid !== undefined) {
+            if (!isJid(jid)) {
+              return errorResult(
+                'Invalid JID format. Use `resolve_contact` to look up the JID for a name.',
+              );
+            }
+            const result = await syncOneChatHistory(jid, resolvedCount);
+            if (!result) {
+              return errorResult(
+                'No stored messages to anchor history sync for this chat. ' +
+                'WhatsApp can only fetch history older than a message we already have.',
+              );
+            }
+            return jsonResult({
+              ok: true,
+              jid,
+              request_id: result.requestId,
+              cursor: result.cursor,
+              count: resolvedCount,
+              note:
+                'Older messages arrive asynchronously and will appear in ' +
+                'subsequent searches/queries once WhatsApp delivers them.',
+            });
+          }
+
+          // Bulk sync across every chat. Mirrors POST /api/chats/sync-history.
+          const allChats = chatsRepo.getAll({ limit: 10000 });
+          let requested = 0;
+          let skipped = 0;
+          for (const chat of allChats) {
+            const result = await syncOneChatHistory(chat.jid, resolvedCount);
+            if (result) requested++;
+            else skipped++;
+            // Throttle so we don't flood WhatsApp with history requests.
+            await new Promise((r) => setTimeout(r, 600));
+          }
+          return jsonResult({
+            ok: true,
+            requested,
+            skipped,
+            total: allChats.length,
+            count: resolvedCount,
+            note:
+              'Older messages arrive asynchronously and will appear in ' +
+              'subsequent searches/queries once WhatsApp delivers them.',
+          });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          return errorResult(`sync_history failed: ${message}`);
+        }
+      },
+    );
+  },
+};
+
+export const actionTools: McpTool[] = [sendMessageTool, reactToMessageTool, syncHistoryTool];

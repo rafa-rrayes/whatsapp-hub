@@ -112,6 +112,11 @@ export const groupParticipantsSchema = z.object({
   action: z.enum(['add', 'remove', 'promote', 'demote']),
 });
 
+// Sync older chat history for a chat
+export const syncHistorySchema = z.object({
+  count: z.number().int().min(1).max(500).optional(),
+});
+
 // ── Export endpoint ─────────────────────────────────────────────────────────
 //
 // Single, richly-parameterised endpoint that produces a Markdown export

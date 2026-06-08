@@ -10,6 +10,7 @@ import makeWASocket, {
   WAMessageKey,
   WAMessage,
   downloadMediaMessage,
+  Browsers,
 } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import { NotConnectedError } from '../api/errors.js';
@@ -71,6 +72,7 @@ class ConnectionManager {
       },
       printQRInTerminal: true,
       logger,
+      browser: Browsers.macOS('Desktop'),
       generateHighQualityLinkPreview: true,
       syncFullHistory: true,
       markOnlineOnConnect: true,
@@ -391,6 +393,16 @@ class ConnectionManager {
   async downloadMedia(msg: WAMessage): Promise<Buffer> {
     this.requireSocket();
     return downloadMediaMessage(msg, 'buffer', {}) as Promise<Buffer>;
+  }
+
+  /**
+   * Ask WhatsApp for older chat history before a known message. `cursorKey` is
+   * the key of the oldest message we already have; `oldestTimestamp` its unix
+   * timestamp (seconds). Returns a Baileys request id; the resulting messages
+   * arrive asynchronously via the `messaging-history.set` event.
+   */
+  async requestHistorySync(cursorKey: WAMessageKey, oldestTimestamp: number, count: number): Promise<string> {
+    return this.requireSocket().fetchMessageHistory(count, cursorKey, oldestTimestamp);
   }
 }
 
