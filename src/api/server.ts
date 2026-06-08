@@ -70,6 +70,14 @@ export function createServer() {
     app.set('trust proxy', 1);
   }
 
+  // Initialize the WebSocket server FIRST, before any routes. express-ws dispatches
+  // each upgrade through the normal Express middleware stack, so the `/ws` route must
+  // be registered before the SPA catch-all (`app.get('*')`). Registered after it, the
+  // catch-all matches the upgrade's rewritten URL, serves index.html, and the socket
+  // is left open but orphaned — no event-bus subscription, so no live events ever
+  // reach the dashboard (this is what broke the "Sync older chats" progress panel).
+  setupWebSocket(app);
+
   // Security headers
   // upgrade-insecure-requests is in Helmet's default CSP directives.
   // It tells browsers to load all sub-resources over HTTPS, which breaks plain HTTP.
@@ -416,9 +424,6 @@ export function createServer() {
       res.status(500).json({ error: 'Internal server error' });
     }
   });
-
-  // Setup WebSocket
-  setupWebSocket(app);
 
   return app;
 }

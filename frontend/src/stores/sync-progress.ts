@@ -86,7 +86,18 @@ export const useSyncProgressStore = create<SyncProgressState>((set) => ({
     }),
 
   onFinished: ({ requested, skipped, total }) =>
-    set({ requested, skipped, total, requestingDone: true }),
+    // The request loop is done — no further requests will fire. WhatsApp sends history
+    // responses asynchronously and gives no per-chat "complete" signal, and chats with
+    // no older messages never produce a `received` event at all. So settle every
+    // outstanding row here instead of leaving it spinning "pending" forever; late
+    // receipts still increment `received` via onReceived (which keeps done: true).
+    set((s) => {
+      const chats: Record<string, SyncChatRow> = {}
+      for (const [jid, r] of Object.entries(s.chats)) {
+        chats[jid] = r.done ? r : { ...r, done: true }
+      }
+      return { requested, skipped, total, requestingDone: true, chats }
+    }),
 
   close: () => set({ ...initial }),
 }))
