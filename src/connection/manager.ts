@@ -320,6 +320,44 @@ class ConnectionManager {
     }
   }
 
+  /**
+   * Resolve a phone JID (@s.whatsapp.net) to its user-level LID (@lid).
+   * Uses the signal LID store, which performs a USync server query on a cache
+   * miss. Returns the user-level LID (device suffix stripped) or null.
+   */
+  async resolveLidForPn(phoneJid: string): Promise<string | null> {
+    if (!phoneJid.endsWith('@s.whatsapp.net')) return null;
+    const sock = this.sock;
+    if (!sock) return null;
+    try {
+      const lid = await sock.signalRepository.lidMapping.getLIDForPN(phoneJid);
+      if (!lid) return null;
+      // Normalize device-specific LID (e.g. "1234:5@lid") to user level ("1234@lid")
+      return `${lid.split('@')[0].split(':')[0]}@lid`;
+    } catch (err) {
+      log.wa.warn({ err, phoneJid }, 'Failed to resolve LID for PN');
+      return null;
+    }
+  }
+
+  /**
+   * Resolve a LID (@lid) to its phone JID (@s.whatsapp.net) from the signal
+   * store cache. Returns null if unknown.
+   */
+  async resolvePnForLid(lid: string): Promise<string | null> {
+    if (!lid.endsWith('@lid')) return null;
+    const sock = this.sock;
+    if (!sock) return null;
+    try {
+      const pn = await sock.signalRepository.lidMapping.getPNForLID(lid);
+      if (!pn) return null;
+      return `${pn.split('@')[0].split(':')[0]}@s.whatsapp.net`;
+    } catch (err) {
+      log.wa.warn({ err, lid }, 'Failed to resolve PN for LID');
+      return null;
+    }
+  }
+
   async updateProfileStatus(status: string): Promise<void> {
     const sock = this.requireSocket();
     await sock.updateProfileStatus(status);

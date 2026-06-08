@@ -323,6 +323,7 @@ export function createServer() {
           'GET /api/contacts': 'List contacts (param: search)',
           'GET /api/contacts/:jid': 'Get contact by JID',
           'GET /api/contacts/:jid/profile-pic': 'Get profile picture URL',
+          'GET /api/contacts/:jid/labels': 'Get labels (tags) for a contact',
         },
         groups: {
           'GET /api/groups': 'List groups (param: search)',

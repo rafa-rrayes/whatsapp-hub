@@ -56,6 +56,13 @@ export interface ApiContact {
   updated_at: string;
 }
 
+export interface ApiLabel {
+  id: string;
+  name: string;
+  color?: string;
+  created_at: string;
+}
+
 export interface ApiGroup {
   jid: string;
   name?: string;

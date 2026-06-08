@@ -64,6 +64,14 @@ export function resolveToPhoneJid(jid: string): string {
 }
 
 /**
+ * Resolve a phone JID to its LID from the in-memory cache, if known.
+ */
+export function resolveToLid(phoneJid: string): string | undefined {
+  if (!phoneJid) return undefined;
+  return phoneToLid.get(phoneJid);
+}
+
+/**
  * Load all JID aliases from DB into in-memory cache. Call on startup.
  */
 export function loadJidAliases(): void {

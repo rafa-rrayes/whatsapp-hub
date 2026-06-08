@@ -6,10 +6,11 @@ import { messagesRepo } from '../database/repositories/messages.js';
 import { contactsRepo } from '../database/repositories/contacts.js';
 import { groupsRepo } from '../database/repositories/groups.js';
 import { chatsRepo } from '../database/repositories/chats.js';
+import { labelsRepo } from '../database/repositories/labels.js';
 import { eventsRepo } from '../database/repositories/events.js';
 import { mediaManager } from '../media/manager.js';
 import { connectionManager } from '../connection/manager.js';
-import { normalizeJid, resolveToPhoneJid } from '../utils/jid.js';
+import { normalizeJid, resolveToPhoneJid, registerJidAlias } from '../utils/jid.js';
 import { hashJid } from '../utils/security.js';
 import { config } from '../config.js';
 import { log } from '../utils/logger.js';
@@ -365,6 +366,10 @@ export function registerEventHandlers(): void {
     const contacts = event.data as BaileysEventMap['contacts.upsert'];
     for (const contact of contacts) {
       try {
+        // Harvest LID ↔ phone mapping when the contact carries both forms
+        if (contact.lid && contact.phoneNumber) {
+          registerJidAlias(contact.lid, contact.phoneNumber);
+        }
         contactsRepo.upsert({
           jid: contact.id,
           name: contact.name,
@@ -592,6 +597,40 @@ export function registerEventHandlers(): void {
       messages: messages?.length || 0,
       isLatest,
     });
+  });
+
+  // ===== LABELS (WhatsApp Business tags) =====
+  eventBus.on('wa.labels.edit', (event) => {
+    const label = event.data as BaileysEventMap['labels.edit'];
+    try {
+      if (label.deleted) {
+        labelsRepo.deleteLabel(label.id);
+      } else {
+        labelsRepo.upsertLabel({ id: label.id, name: label.name, color: label.color });
+      }
+    } catch (err) {
+      log.event.error({ err }, 'Error processing label edit');
+    }
+  });
+
+  eventBus.on('wa.labels.association', (event) => {
+    const { association, type } = event.data as BaileysEventMap['labels.association'];
+    try {
+      const isMessage = 'messageId' in association;
+      const assoc = {
+        labelId: association.labelId,
+        chatJid: association.chatId,
+        messageId: isMessage ? association.messageId : undefined,
+        type: (isMessage ? 'message' : 'chat') as 'chat' | 'message',
+      };
+      if (type === 'add') {
+        labelsRepo.addAssociation(assoc);
+      } else {
+        labelsRepo.removeAssociation(assoc);
+      }
+    } catch (err) {
+      log.event.error({ err }, 'Error processing label association');
+    }
   });
 
   // ===== LOG ALL EVENTS =====

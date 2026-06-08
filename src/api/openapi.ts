@@ -124,6 +124,14 @@ export function generateOpenApiSpec(): object {
           responses: { '200': ok, '404': notFound, '401': unauthorized },
         },
       },
+      '/contacts/{jid}/labels': {
+        get: {
+          summary: 'Get labels (tags) for a contact',
+          tags: ['Contacts'],
+          parameters: [{ name: 'jid', in: 'path', required: true, schema: { type: 'string' } }],
+          responses: { '200': ok, '401': unauthorized },
+        },
+      },
       '/groups': {
         get: {
           summary: 'List groups',

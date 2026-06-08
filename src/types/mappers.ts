@@ -1,9 +1,10 @@
 import type { MessageRow } from '../database/repositories/messages.js';
 import type { ContactRow } from '../database/repositories/contacts.js';
+import type { LabelRow } from '../database/repositories/labels.js';
 import type { GroupRow } from '../database/repositories/groups.js';
 import type { ChatRow } from '../database/repositories/chats.js';
 import type { MediaRow } from '../database/repositories/media.js';
-import type { ApiMessage, ApiContact, ApiGroup, ApiChat, ApiMedia } from './api.js';
+import type { ApiMessage, ApiContact, ApiLabel, ApiGroup, ApiChat, ApiMedia } from './api.js';
 
 /** Convert integer (0/1) to boolean. */
 function bool(v: number): boolean {
@@ -67,6 +68,15 @@ export function toApiContact(row: ContactRow): ApiContact {
     status_text: row.status_text,
     first_seen_at: row.first_seen_at,
     updated_at: row.updated_at,
+  };
+}
+
+export function toApiLabel(row: LabelRow): ApiLabel {
+  return {
+    id: row.id,
+    name: row.name,
+    color: row.color,
+    created_at: row.created_at,
   };
 }
 
