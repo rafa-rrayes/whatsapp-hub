@@ -23,6 +23,15 @@ router.get('/', asyncHandler(async (_req, res) => {
   });
 }));
 
+// GET /api/stats/analytics — rich message analytics for the Statistics dashboard.
+// Optional query params: chat (jid), days (trailing window; omit for all-time).
+router.get('/analytics', asyncHandler(async (req, res) => {
+  const chat = (req.query.chat as string | undefined) || undefined;
+  const daysRaw = req.query.days ? parseInt(req.query.days as string, 10) : NaN;
+  const days = Number.isFinite(daysRaw) && daysRaw > 0 ? Math.min(daysRaw, 3650) : undefined;
+  res.json(messagesRepo.getAnalytics({ chat, days }));
+}));
+
 // GET /api/events — query event audit log
 router.get('/events', asyncHandler(async (req, res) => {
   const events = eventsRepo.query({

@@ -74,6 +74,32 @@ export interface MessageStats {
   mediaCount: number;
 }
 
+export interface MessageAnalytics {
+  range: { days: number | null; firstTs: number | null; lastTs: number | null };
+  totals: {
+    total: number;
+    sent: number;
+    received: number;
+    media: number;
+    forwarded: number;
+    starred: number;
+    deleted: number;
+    edited: number;
+    reactions: number;
+    words: number;
+    activeDays: number;
+  };
+  byDay: Array<{ day: string; total: number; sent: number; received: number }>;
+  byType: Array<{ message_type: string; count: number }>;
+  byHour: Array<{ hour: number; count: number; sent: number; received: number }>;
+  byWeekday: Array<{ weekday: number; count: number }>;
+  heatmap: Array<{ weekday: number; hour: number; count: number }>;
+  byChat: Array<{ remote_jid: string; count: number; sent: number; received: number; last_ts: number }>;
+  topSenders: Array<{ sender: string; count: number }>;
+  media: { total: number; totalSize: number; byKind: Array<{ kind: string; count: number; size: number }> };
+  topEmojis: Array<{ emoji: string; count: number }>;
+}
+
 export interface MessageQuery {
   remote_jid?: string;
   from_jid?: string;
@@ -301,6 +327,149 @@ export const messagesRepo = {
       mediaCount: (
         db.prepare('SELECT COUNT(*) as c FROM messages WHERE has_media = 1').get() as { c: number }
       ).c,
+    };
+  },
+
+  /**
+   * Rich analytics for the Statistics dashboard. Optionally scoped to a single
+   * chat and/or a trailing time window (in days). Day/hour/weekday buckets use
+   * 'localtime' so the heatmap and hourly charts reflect the user's clock rather
+   * than UTC.
+   */
+  getAnalytics(opts: { chat?: string; days?: number } = {}): MessageAnalytics {
+    const db = getDb();
+
+    // Build a shared filter shared by every aggregate below.
+    const conditions: string[] = [];
+    const params: Record<string, unknown> = {};
+    if (opts.chat) {
+      conditions.push('remote_jid = @chat');
+      params.chat = opts.chat;
+    }
+    if (opts.days && opts.days > 0) {
+      conditions.push('timestamp >= @after');
+      params.after = Math.floor(Date.now() / 1000) - opts.days * 86400;
+    }
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    // Prefix for queries that need to AND extra conditions onto the shared filter.
+    const andPrefix = conditions.length ? `${conditions.join(' AND ')} AND ` : '';
+    const bind = Object.keys(params).length ? [params] : [];
+    const all = <T>(sql: string): T[] => db.prepare(sql).all(...bind) as T[];
+    const one = <T>(sql: string): T => db.prepare(sql).get(...bind) as T;
+
+    const totals = one<{
+      total: number; sent: number; received: number; media: number; forwarded: number;
+      starred: number; deleted: number; edited: number; reactions: number; words: number;
+      activeDays: number; firstTs: number | null; lastTs: number | null;
+    }>(`
+      SELECT
+        COUNT(*) as total,
+        COALESCE(SUM(from_me), 0) as sent,
+        COALESCE(SUM(CASE WHEN from_me = 0 THEN 1 ELSE 0 END), 0) as received,
+        COALESCE(SUM(has_media), 0) as media,
+        COALESCE(SUM(is_forwarded), 0) as forwarded,
+        COALESCE(SUM(is_starred), 0) as starred,
+        COALESCE(SUM(is_deleted), 0) as deleted,
+        COALESCE(SUM(CASE WHEN edit_type > 0 THEN 1 ELSE 0 END), 0) as edited,
+        COALESCE(SUM(CASE WHEN message_type = 'reaction' THEN 1 ELSE 0 END), 0) as reactions,
+        COALESCE(SUM(
+          CASE WHEN body IS NOT NULL AND trim(body) != ''
+            THEN length(trim(body)) - length(replace(trim(body), ' ', '')) + 1
+            ELSE 0 END
+        ), 0) as words,
+        COUNT(DISTINCT date(timestamp, 'unixepoch', 'localtime')) as activeDays,
+        MIN(timestamp) as firstTs,
+        MAX(timestamp) as lastTs
+      FROM messages ${where}
+    `);
+
+    const byDay = all<{ day: string; total: number; sent: number; received: number }>(`
+      SELECT date(timestamp, 'unixepoch', 'localtime') as day,
+        COUNT(*) as total,
+        COALESCE(SUM(from_me), 0) as sent,
+        COALESCE(SUM(CASE WHEN from_me = 0 THEN 1 ELSE 0 END), 0) as received
+      FROM messages ${where}
+      GROUP BY day ORDER BY day DESC LIMIT 180
+    `);
+
+    const byType = all<{ message_type: string; count: number }>(`
+      SELECT COALESCE(message_type, 'unknown') as message_type, COUNT(*) as count
+      FROM messages ${where} GROUP BY message_type ORDER BY count DESC
+    `);
+
+    const byHour = all<{ hour: number; count: number; sent: number; received: number }>(`
+      SELECT CAST(strftime('%H', timestamp, 'unixepoch', 'localtime') AS INTEGER) as hour,
+        COUNT(*) as count,
+        COALESCE(SUM(from_me), 0) as sent,
+        COALESCE(SUM(CASE WHEN from_me = 0 THEN 1 ELSE 0 END), 0) as received
+      FROM messages ${where} GROUP BY hour ORDER BY hour
+    `);
+
+    const byWeekday = all<{ weekday: number; count: number }>(`
+      SELECT CAST(strftime('%w', timestamp, 'unixepoch', 'localtime') AS INTEGER) as weekday,
+        COUNT(*) as count
+      FROM messages ${where} GROUP BY weekday ORDER BY weekday
+    `);
+
+    const heatmap = all<{ weekday: number; hour: number; count: number }>(`
+      SELECT CAST(strftime('%w', timestamp, 'unixepoch', 'localtime') AS INTEGER) as weekday,
+        CAST(strftime('%H', timestamp, 'unixepoch', 'localtime') AS INTEGER) as hour,
+        COUNT(*) as count
+      FROM messages ${where} GROUP BY weekday, hour
+    `);
+
+    const byChat = all<{ remote_jid: string; count: number; sent: number; received: number; last_ts: number }>(`
+      SELECT remote_jid, COUNT(*) as count,
+        COALESCE(SUM(from_me), 0) as sent,
+        COALESCE(SUM(CASE WHEN from_me = 0 THEN 1 ELSE 0 END), 0) as received,
+        MAX(timestamp) as last_ts
+      FROM messages ${where}
+      GROUP BY remote_jid ORDER BY count DESC LIMIT 25
+    `);
+
+    const topSenders = all<{ sender: string; count: number }>(`
+      SELECT COALESCE(participant, from_jid) as sender, COUNT(*) as count
+      FROM messages
+      WHERE ${andPrefix}from_me = 0 AND participant IS NOT NULL
+      GROUP BY sender ORDER BY count DESC LIMIT 15
+    `);
+
+    const mediaByKind = all<{ kind: string; count: number; size: number }>(`
+      SELECT
+        CASE
+          WHEN media_mime_type IS NULL OR media_mime_type = '' THEN 'other'
+          WHEN instr(media_mime_type, '/') > 0 THEN substr(media_mime_type, 1, instr(media_mime_type, '/') - 1)
+          ELSE media_mime_type
+        END as kind,
+        COUNT(*) as count,
+        COALESCE(SUM(media_size), 0) as size
+      FROM messages
+      WHERE ${andPrefix}has_media = 1
+      GROUP BY kind ORDER BY count DESC
+    `);
+
+    const topEmojis = all<{ emoji: string; count: number }>(`
+      SELECT reaction_emoji as emoji, COUNT(*) as count
+      FROM messages
+      WHERE ${andPrefix}reaction_emoji IS NOT NULL AND reaction_emoji != ''
+      GROUP BY reaction_emoji ORDER BY count DESC LIMIT 18
+    `);
+
+    return {
+      range: { days: opts.days ?? null, firstTs: totals.firstTs, lastTs: totals.lastTs },
+      totals: {
+        total: totals.total, sent: totals.sent, received: totals.received, media: totals.media,
+        forwarded: totals.forwarded, starred: totals.starred, deleted: totals.deleted,
+        edited: totals.edited, reactions: totals.reactions, words: totals.words,
+        activeDays: totals.activeDays,
+      },
+      byDay, byType, byHour, byWeekday, heatmap, byChat, topSenders,
+      media: {
+        total: mediaByKind.reduce((s, m) => s + m.count, 0),
+        totalSize: mediaByKind.reduce((s, m) => s + m.size, 0),
+        byKind: mediaByKind,
+      },
+      topEmojis,
     };
   },
 };

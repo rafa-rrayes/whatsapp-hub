@@ -24,9 +24,7 @@ import {
 } from "@/components/ui/table"
 import { Skeleton } from "@/components/ui/skeleton"
 import { JsonViewer } from "@/components/json-viewer"
-import { MessagesPerDayChart } from "@/components/charts/messages-per-day"
-import { MessagesByTypeChart } from "@/components/charts/messages-by-type"
-import { TopChatsChart } from "@/components/charts/top-chats"
+import { StatisticsTab } from "@/components/stats/statistics-tab"
 import { ChevronLeft, ChevronRight, Search, X, History, DownloadCloud, Loader2 } from "lucide-react"
 import { formatTimestamp, truncate } from "@/lib/utils"
 import { useContactMap, resolveJid } from "@/hooks/use-contact-map"
@@ -361,12 +359,8 @@ export function MessagesPage() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="stats" className="space-y-4 mt-4">
-          <MessagesPerDayChart />
-          <div className="grid gap-4 lg:grid-cols-2">
-            <MessagesByTypeChart />
-            <TopChatsChart />
-          </div>
+        <TabsContent value="stats" className="mt-4">
+          <StatisticsTab />
         </TabsContent>
       </Tabs>
     </div>

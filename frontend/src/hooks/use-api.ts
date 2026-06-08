@@ -4,6 +4,7 @@ import type {
   ConnectionStatus,
   QRData,
   DashboardStats,
+  MessageAnalytics,
   MessageQueryResult,
   MessageStats,
   Contact,
@@ -67,6 +68,25 @@ export function useDashboardStats() {
     queryKey: ["stats"],
     queryFn: () => api.get<DashboardStats>("/api/stats"),
     refetchInterval: 30_000,
+  })
+}
+
+export interface AnalyticsParams {
+  /** Trailing window in days; omit for all-time. */
+  days?: number
+  /** Restrict to a single chat jid. */
+  chat?: string
+}
+
+export function useMessageAnalytics(params: AnalyticsParams = {}) {
+  const searchParams = new URLSearchParams()
+  if (params.days) searchParams.set("days", String(params.days))
+  if (params.chat) searchParams.set("chat", params.chat)
+  const qs = searchParams.toString()
+  return useQuery({
+    queryKey: ["stats", "analytics", params],
+    queryFn: () => api.get<MessageAnalytics>(`/api/stats/analytics${qs ? `?${qs}` : ""}`),
+    staleTime: 60_000,
   })
 }
 

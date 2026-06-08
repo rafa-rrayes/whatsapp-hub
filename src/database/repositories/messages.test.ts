@@ -192,6 +192,52 @@ describe('messagesRepo', () => {
     });
   });
 
+  describe('getAnalytics', () => {
+    const now = Math.floor(Date.now() / 1000);
+
+    it('aggregates totals, splits and breakdowns', () => {
+      messagesRepo.upsert(makeMessage({ id: 'a', from_me: 1, message_type: 'text', body: 'hello world', timestamp: now - 100 }));
+      messagesRepo.upsert(makeMessage({ id: 'b', from_me: 0, message_type: 'text', body: 'one two three', timestamp: now - 200 }));
+      messagesRepo.upsert(makeMessage({ id: 'c', from_me: 0, message_type: 'image', body: '', has_media: 1, media_mime_type: 'image/jpeg', media_size: 2048, timestamp: now - 300 }));
+      messagesRepo.upsert(makeMessage({ id: 'd', from_me: 0, message_type: 'text', body: 'x', is_forwarded: 1, timestamp: now - 400 }));
+
+      const a = messagesRepo.getAnalytics();
+      expect(a.totals.total).toBe(4);
+      expect(a.totals.sent).toBe(1);
+      expect(a.totals.received).toBe(3);
+      expect(a.totals.media).toBe(1);
+      expect(a.totals.forwarded).toBe(1);
+      // "hello world"(2) + "one two three"(3) + "x"(1) = 6
+      expect(a.totals.words).toBe(6);
+      expect(a.totals.activeDays).toBeGreaterThanOrEqual(1);
+      expect(a.byType.find((t) => t.message_type === 'text')!.count).toBe(3);
+      expect(a.media.total).toBe(1);
+      expect(a.media.totalSize).toBe(2048);
+      expect(a.media.byKind[0].kind).toBe('image');
+      expect(a.byHour.reduce((s, h) => s + h.count, 0)).toBe(4);
+    });
+
+    it('scopes to a single chat when chat is provided', () => {
+      const jid = '5511777777777@s.whatsapp.net';
+      messagesRepo.upsert(makeMessage({ id: 'in', remote_jid: jid, timestamp: now - 10 }));
+      messagesRepo.upsert(makeMessage({ id: 'out', remote_jid: 'other@s.whatsapp.net', timestamp: now - 20 }));
+
+      const a = messagesRepo.getAnalytics({ chat: jid });
+      expect(a.totals.total).toBe(1);
+      expect(a.byChat.length).toBe(1);
+      expect(a.byChat[0].remote_jid).toBe(jid);
+    });
+
+    it('respects the trailing-day window', () => {
+      messagesRepo.upsert(makeMessage({ id: 'recent', timestamp: now - 3600 }));
+      messagesRepo.upsert(makeMessage({ id: 'old', timestamp: now - 40 * 86400 }));
+
+      const a = messagesRepo.getAnalytics({ days: 7 });
+      expect(a.totals.total).toBe(1);
+      expect(a.range.days).toBe(7);
+    });
+  });
+
   describe('stripRawMessages', () => {
     it('includes raw_message when stripRawMessages is false', () => {
       messagesRepo.upsert(makeMessage({ id: 'msg-1', raw_message: '{"key":"value"}' }));

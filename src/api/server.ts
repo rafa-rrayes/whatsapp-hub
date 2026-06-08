@@ -367,6 +367,7 @@ export function createServer() {
         },
         stats: {
           'GET /api/stats': 'Dashboard overview',
+          'GET /api/stats/analytics?chat=&days=': 'Rich message analytics',
           'GET /api/stats/events': 'Query event log',
           'GET /api/stats/events/types': 'Event type counts',
           'DELETE /api/stats/events/prune?days=': 'Prune old events',

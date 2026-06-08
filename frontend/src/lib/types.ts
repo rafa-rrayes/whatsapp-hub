@@ -117,6 +117,32 @@ export interface MessageStats {
   mediaCount: number
 }
 
+export interface MessageAnalytics {
+  range: { days: number | null; firstTs: number | null; lastTs: number | null }
+  totals: {
+    total: number
+    sent: number
+    received: number
+    media: number
+    forwarded: number
+    starred: number
+    deleted: number
+    edited: number
+    reactions: number
+    words: number
+    activeDays: number
+  }
+  byDay: Array<{ day: string; total: number; sent: number; received: number }>
+  byType: Array<{ message_type: string; count: number }>
+  byHour: Array<{ hour: number; count: number; sent: number; received: number }>
+  byWeekday: Array<{ weekday: number; count: number }>
+  heatmap: Array<{ weekday: number; hour: number; count: number }>
+  byChat: Array<{ remote_jid: string; count: number; sent: number; received: number; last_ts: number }>
+  topSenders: Array<{ sender: string; count: number }>
+  media: { total: number; totalSize: number; byKind: Array<{ kind: string; count: number; size: number }> }
+  topEmojis: Array<{ emoji: string; count: number }>
+}
+
 export interface DashboardStats {
   messages: MessageStats
   contacts: number
