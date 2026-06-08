@@ -49,6 +49,12 @@ export interface SyncReceivedPayload {
   jid: string;
   /** Messages stored from this on-demand batch for the jid. */
   count: number;
+  /**
+   * Terminal marker: the chat's request loop has finished (reached its target
+   * or exhausted its history). Sent with `count: 0` so it settles the row to
+   * "done" without changing the tally.
+   */
+  done?: boolean;
 }
 
 /** The request loop has finished (all requests fired). */

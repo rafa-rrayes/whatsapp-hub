@@ -9,6 +9,7 @@ import { chatsRepo } from '../database/repositories/chats.js';
 import { labelsRepo } from '../database/repositories/labels.js';
 import { eventsRepo } from '../database/repositories/events.js';
 import { emitSyncReceived } from './sync-progress.js';
+import { resolveHistoryBatch } from './history-waiter.js';
 import { mediaManager } from '../media/manager.js';
 import { connectionManager } from '../connection/manager.js';
 import { normalizeJid, resolveToPhoneJid, registerJidAlias } from '../utils/jid.js';
@@ -633,6 +634,7 @@ export function registerEventHandlers(): void {
     if (syncType === proto.HistorySync.HistorySyncType.ON_DEMAND) {
       for (const [jid, count] of receivedByJid) {
         emitSyncReceived({ jid, count });
+        resolveHistoryBatch(jid, count);
       }
     }
 

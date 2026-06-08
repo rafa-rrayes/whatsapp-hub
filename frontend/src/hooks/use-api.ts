@@ -142,7 +142,7 @@ export function useSyncChatHistory() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ jid, count }: { jid: string; count?: number }) =>
-      api.post<{ success: boolean; jid: string; requestId: string; cursor: unknown }>(
+      api.post<{ success: boolean; sessionId: string; jid: string; target: number }>(
         `/api/chats/${encodeURIComponent(jid)}/sync-history`,
         count !== undefined ? { count } : undefined
       ),
@@ -154,7 +154,7 @@ export function useSyncAllHistory() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: () =>
-      api.post<{ success: boolean; requested: number; skipped: number; total: number }>(
+      api.post<{ success: boolean; sessionId: string; total: number; target: number }>(
         "/api/chats/sync-history"
       ),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["messages"] }),

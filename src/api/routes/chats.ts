@@ -5,25 +5,12 @@ import { connectionManager } from '../../connection/manager.js';
 import { clampPagination, isValidJid } from '../../utils/security.js';
 import { validate } from '../middleware/validate.js';
 import { syncHistorySchema } from '../schemas.js';
-import { asyncHandler, NotFoundError, BadRequestError, NotConnectedError } from '../errors.js';
+import { asyncHandler, NotFoundError, BadRequestError, NotConnectedError, ConflictError } from '../errors.js';
 import { toApiChat, toApiMessage } from '../../types/mappers.js';
-import { emitSyncStarted, emitSyncRequested, emitSyncFinished } from '../../events/sync-progress.js';
-import { v4 as uuid } from 'uuid';
+import { startHistorySync, DEFAULT_TARGET, MAX_TARGET } from '../../sync/history-sync.js';
+import { normalizeJid } from '../../utils/jid.js';
 
 const router = Router();
-
-/**
- * Request older message history for a single chat, anchored on the oldest
- * message we already have stored (Baileys walks backwards from that cursor).
- * Returns null when there's no stored message to anchor the cursor on.
- */
-async function syncOneChat(jid: string, count: number) {
-  const oldest = messagesRepo.getOldestForChat(jid);
-  if (!oldest) return null;
-  const key = { remoteJid: jid, id: oldest.id, fromMe: !!oldest.from_me, participant: oldest.participant || undefined };
-  const requestId = await connectionManager.requestHistorySync(key, oldest.timestamp, count);
-  return { requestId, cursor: { id: oldest.id, timestamp: oldest.timestamp } };
-}
 
 // GET /api/chats — list all chats
 router.get('/', asyncHandler(async (req, res) => {
@@ -35,55 +22,21 @@ router.get('/', asyncHandler(async (req, res) => {
   res.json({ data: chats.map(toApiChat), total: chats.length });
 }));
 
-// POST /api/chats/sync-history — request older history for ALL chats (bulk).
+// POST /api/chats/sync-history — depth-first older-history sync for ALL chats.
 // Registered before the /:jid routes so the literal path isn't captured by :jid.
-router.post('/sync-history', asyncHandler(async (_req, res) => {
-  // History fetches need a live socket. Fail fast (and clearly) when WhatsApp is
-  // offline so the dashboard shows "not connected" instead of a stalled panel.
+// Kicks off a background runner and returns immediately; progress streams over
+// the WebSocket as `history.sync.*` events (the dashboard's sync panel).
+router.post('/sync-history', asyncHandler(async (req, res) => {
   if (connectionManager.getStatus() !== 'connected') {
     throw new NotConnectedError();
   }
-
-  const count = 50;
+  const target = Math.min(MAX_TARGET, Math.max(1, Math.floor(Number(req.body?.count) || DEFAULT_TARGET)));
   const allChats = chatsRepo.getAll({ limit: 10000 });
-  const sessionId = uuid();
-
-  // Announce the run so the dashboard can open its progress panel before the
-  // (throttled) loop below — which holds this request open for ~N×600ms — finishes.
-  emitSyncStarted({ sessionId, scope: 'all', total: allChats.length, count });
-
-  let requested = 0;
-  let skipped = 0;
-  let processed = 0;
-
-  for (const chat of allChats) {
-    let result: Awaited<ReturnType<typeof syncOneChat>> = null;
-    try {
-      result = await syncOneChat(chat.jid, count);
-    } catch {
-      // A per-chat failure (e.g. the socket drops mid-run) counts as skipped so
-      // one bad chat doesn't abort the whole bulk sync.
-      result = null;
-    }
-    if (result) requested++;
-    else skipped++;
-    processed++;
-    emitSyncRequested({
-      sessionId,
-      jid: chat.jid,
-      didRequest: !!result,
-      processed,
-      total: allChats.length,
-      requested,
-      skipped,
-    });
-    // Throttle so we don't flood WhatsApp with history requests.
-    await new Promise((r) => setTimeout(r, 600));
+  const result = startHistorySync({ scope: 'all', jids: allChats.map((c) => c.jid), target });
+  if (!result.started) {
+    throw new ConflictError('A history sync is already running');
   }
-
-  emitSyncFinished({ sessionId, requested, skipped, total: allChats.length });
-
-  res.json({ success: true, requested, skipped, total: allChats.length });
+  res.json({ success: true, sessionId: result.sessionId, total: result.total, target });
 }));
 
 // GET /api/chats/:jid — single chat with recent messages
@@ -103,7 +56,7 @@ router.get('/:jid', asyncHandler(async (req, res) => {
   res.json({ ...toApiChat(chat), recent_messages: recentMessages.data.map(toApiMessage) });
 }));
 
-// POST /api/chats/:jid/sync-history — request older history for a single chat
+// POST /api/chats/:jid/sync-history — depth-first older-history sync for one chat.
 router.post('/:jid/sync-history', validate(syncHistorySchema), asyncHandler(async (req, res) => {
   if (!isValidJid(req.params.jid)) {
     throw new BadRequestError('Invalid JID format');
@@ -112,19 +65,17 @@ router.post('/:jid/sync-history', validate(syncHistorySchema), asyncHandler(asyn
     throw new NotConnectedError();
   }
   const jid = req.params.jid as string;
-  const count = req.body.count ?? 50;
-  const result = await syncOneChat(jid, count);
-  if (!result) {
+  const target = Math.min(MAX_TARGET, Math.max(1, Math.floor(Number(req.body?.count) || DEFAULT_TARGET)));
+  // Fail fast (parity with the old behavior) when there's no stored message to
+  // anchor the history cursor on.
+  if (!messagesRepo.getOldestForChat(normalizeJid(jid))) {
     throw new BadRequestError('No messages stored for this chat yet to anchor history sync');
   }
-
-  // Drive the same progress panel as the bulk path (a single-chat, single-row run).
-  const sessionId = uuid();
-  emitSyncStarted({ sessionId, scope: 'chat', total: 1, count });
-  emitSyncRequested({ sessionId, jid, didRequest: true, processed: 1, total: 1, requested: 1, skipped: 0 });
-  emitSyncFinished({ sessionId, requested: 1, skipped: 0, total: 1 });
-
-  res.json({ success: true, jid, ...result });
+  const result = startHistorySync({ scope: 'chat', jids: [jid], target });
+  if (!result.started) {
+    throw new ConflictError('A history sync is already running');
+  }
+  res.json({ success: true, sessionId: result.sessionId, jid, target });
 }));
 
 export default router;

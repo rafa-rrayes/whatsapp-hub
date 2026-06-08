@@ -90,10 +90,10 @@ export function SyncProgressPanel() {
                         r.done ? "text-foreground" : "text-muted-foreground"
                       )}
                     >
-                      {r.done ? `${r.received} msg${r.received === 1 ? "" : "s"}` : "pending"}
+                      {r.done ? `${r.received} msg${r.received === 1 ? "" : "s"}` : count > 0 ? `${r.received} / ${count}` : "pending"}
                     </span>
                   </div>
-                  <Progress className="mt-1" value={r.done ? 100 : 0} indeterminate={!r.done} />
+                  <Progress className="mt-1" value={r.done ? 100 : count > 0 ? Math.min(100, (r.received / count) * 100) : 0} indeterminate={!r.done && (count === 0 || r.received === 0)} />
                 </div>
                 {r.done ? (
                   <Check className="h-3.5 w-3.5 shrink-0 text-emerald-500" />

@@ -20,7 +20,7 @@ export interface SyncRequestedEvent {
   requested: number
   skipped: number
 }
-export interface SyncReceivedEvent { jid: string; count: number }
+export interface SyncReceivedEvent { jid: string; count: number; done?: boolean }
 export interface SyncFinishedEvent { sessionId: string; requested: number; skipped: number; total: number }
 
 interface SyncProgressState {
@@ -75,13 +75,16 @@ export const useSyncProgressStore = create<SyncProgressState>((set) => ({
       return { active: true, processed, total, requested, skipped, chats }
     }),
 
-  onReceived: ({ jid, count }) =>
+  onReceived: ({ jid, count, done }) =>
     set((s) => {
       // Ignore stray history batches when no panel is open (e.g. MCP-triggered syncs).
       if (!s.active) return s
       const prev = s.chats[jid] ?? { jid, received: 0, done: false }
       return {
-        chats: { ...s.chats, [jid]: { jid, received: prev.received + count, done: true } },
+        chats: {
+          ...s.chats,
+          [jid]: { jid, received: prev.received + count, done: done ? true : prev.done },
+        },
       }
     }),
 

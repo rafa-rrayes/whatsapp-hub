@@ -157,8 +157,7 @@ export function MessagesPage() {
                       syncChatHistory.mutate(
                         { jid: params.chat as string },
                         {
-                          onSuccess: () =>
-                            toast.success("Requested — older messages will appear shortly"),
+                          onSuccess: () => toast.success("Syncing older messages — they'll appear as they arrive"),
                           onError: (e) => {
                             closeSync()
                             toast.error(e.message)
@@ -186,7 +185,7 @@ export function MessagesPage() {
                     syncAllHistory.mutate(undefined, {
                       onSuccess: (result) =>
                         toast.success(
-                          `Sync started: ${result.requested} requested, ${result.skipped} skipped (${result.total} total)`
+                          `Syncing older history for ${result.total} chat${result.total === 1 ? "" : "s"} (up to ${result.target} each)`
                         ),
                       onError: (e) => {
                         closeSync()

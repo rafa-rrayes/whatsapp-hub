@@ -22,6 +22,10 @@ export class NotConnectedError extends ApiError {
   constructor() { super(503, 'WhatsApp is not connected'); }
 }
 
+export class ConflictError extends ApiError {
+  constructor(message = 'Conflict') { super(409, message); }
+}
+
 export function asyncHandler(
   fn: (req: Request, res: Response, next: NextFunction) => Promise<void>
 ): RequestHandler {
