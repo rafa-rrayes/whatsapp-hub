@@ -5,7 +5,7 @@ import { connectionManager } from '../../connection/manager.js';
 import { clampPagination, isValidJid } from '../../utils/security.js';
 import { validate } from '../middleware/validate.js';
 import { syncHistorySchema } from '../schemas.js';
-import { asyncHandler, NotFoundError, BadRequestError } from '../errors.js';
+import { asyncHandler, NotFoundError, BadRequestError, NotConnectedError } from '../errors.js';
 import { toApiChat, toApiMessage } from '../../types/mappers.js';
 import { emitSyncStarted, emitSyncRequested, emitSyncFinished } from '../../events/sync-progress.js';
 import { v4 as uuid } from 'uuid';
@@ -38,6 +38,12 @@ router.get('/', asyncHandler(async (req, res) => {
 // POST /api/chats/sync-history — request older history for ALL chats (bulk).
 // Registered before the /:jid routes so the literal path isn't captured by :jid.
 router.post('/sync-history', asyncHandler(async (_req, res) => {
+  // History fetches need a live socket. Fail fast (and clearly) when WhatsApp is
+  // offline so the dashboard shows "not connected" instead of a stalled panel.
+  if (connectionManager.getStatus() !== 'connected') {
+    throw new NotConnectedError();
+  }
+
   const count = 50;
   const allChats = chatsRepo.getAll({ limit: 10000 });
   const sessionId = uuid();
@@ -51,7 +57,14 @@ router.post('/sync-history', asyncHandler(async (_req, res) => {
   let processed = 0;
 
   for (const chat of allChats) {
-    const result = await syncOneChat(chat.jid, count);
+    let result: Awaited<ReturnType<typeof syncOneChat>> = null;
+    try {
+      result = await syncOneChat(chat.jid, count);
+    } catch {
+      // A per-chat failure (e.g. the socket drops mid-run) counts as skipped so
+      // one bad chat doesn't abort the whole bulk sync.
+      result = null;
+    }
     if (result) requested++;
     else skipped++;
     processed++;
@@ -94,6 +107,9 @@ router.get('/:jid', asyncHandler(async (req, res) => {
 router.post('/:jid/sync-history', validate(syncHistorySchema), asyncHandler(async (req, res) => {
   if (!isValidJid(req.params.jid)) {
     throw new BadRequestError('Invalid JID format');
+  }
+  if (connectionManager.getStatus() !== 'connected') {
+    throw new NotConnectedError();
   }
   const jid = req.params.jid as string;
   const count = req.body.count ?? 50;
