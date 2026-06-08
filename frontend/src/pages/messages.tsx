@@ -2,6 +2,7 @@ import { useState } from "react"
 import { useMessages, useSyncAllHistory, useSyncChatHistory } from "@/hooks/use-api"
 import { toast } from "sonner"
 import { useAuthStore } from "@/stores/auth"
+import { useSyncProgressStore } from "@/stores/sync-progress"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -25,6 +26,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton"
 import { JsonViewer } from "@/components/json-viewer"
 import { StatisticsTab } from "@/components/stats/statistics-tab"
+import { SyncProgressPanel } from "@/components/sync-progress-panel"
 import { ChevronLeft, ChevronRight, Search, X, History, DownloadCloud, Loader2 } from "lucide-react"
 import { formatTimestamp, truncate } from "@/lib/utils"
 import { useContactMap, resolveJid } from "@/hooks/use-contact-map"
@@ -42,6 +44,8 @@ export function MessagesPage() {
   const apiKey = useAuthStore((s) => s.apiKey)
   const syncAllHistory = useSyncAllHistory()
   const syncChatHistory = useSyncChatHistory()
+  const beginSync = useSyncProgressStore((s) => s.begin)
+  const closeSync = useSyncProgressStore((s) => s.close)
 
   const { data, isLoading } = useMessages({ ...params, search: search || undefined })
 
@@ -148,16 +152,20 @@ export function MessagesPage() {
                     variant="outline"
                     size="sm"
                     className="h-9"
-                    onClick={() =>
+                    onClick={() => {
+                      beginSync("chat")
                       syncChatHistory.mutate(
                         { jid: params.chat as string },
                         {
                           onSuccess: () =>
                             toast.success("Requested — older messages will appear shortly"),
-                          onError: (e) => toast.error(e.message),
+                          onError: (e) => {
+                            closeSync()
+                            toast.error(e.message)
+                          },
                         }
                       )
-                    }
+                    }}
                     disabled={syncChatHistory.isPending}
                   >
                     {syncChatHistory.isPending ? (
@@ -173,15 +181,19 @@ export function MessagesPage() {
                   variant="outline"
                   size="sm"
                   className="h-9"
-                  onClick={() =>
+                  onClick={() => {
+                    beginSync("all")
                     syncAllHistory.mutate(undefined, {
                       onSuccess: (result) =>
                         toast.success(
                           `Sync started: ${result.requested} requested, ${result.skipped} skipped (${result.total} total)`
                         ),
-                      onError: (e) => toast.error(e.message),
+                      onError: (e) => {
+                        closeSync()
+                        toast.error(e.message)
+                      },
                     })
-                  }
+                  }}
                   disabled={syncAllHistory.isPending}
                 >
                   {syncAllHistory.isPending ? (
@@ -194,6 +206,8 @@ export function MessagesPage() {
               </div>
             </CardContent>
           </Card>
+
+          <SyncProgressPanel />
 
           {/* Table */}
           <Card>

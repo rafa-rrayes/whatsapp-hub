@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import Database from 'better-sqlite3-multiple-ciphers';
 import type { WAMessage } from '@whiskeysockets/baileys';
+import { proto } from '@whiskeysockets/baileys';
 import { createTestDb } from '../test-utils/db.js';
 
 let db: Database.Database;
@@ -170,5 +171,59 @@ describe('messaging-history.set handler', () => {
     expect(payload.syncType).toBe(5);
     expect(payload.messages).toBe(1);
     expect(payload.isLatest).toBe(false);
+  });
+
+  it('emits per-chat history.sync.received for on-demand syncs', () => {
+    const received: Array<{ jid: string; count: number }> = [];
+    const listener = (e: { data: { jid: string; count: number } }) => received.push(e.data);
+    eventBus.on('history.sync.received', listener);
+    try {
+      eventBus.publish('wa.messaging-history.set', {
+        chats: [],
+        contacts: [],
+        messages: [
+          makeHistoryMessage({ id: 'od-1', remoteJid: '5511900000001@s.whatsapp.net' }),
+          makeHistoryMessage({ id: 'od-2', remoteJid: '5511900000001@s.whatsapp.net' }),
+          makeHistoryMessage({ id: 'od-3', remoteJid: '5511900000002@s.whatsapp.net' }),
+          // Protocol messages aren't stored, so they must not be counted.
+          makeHistoryMessage({ id: 'od-proto', protocol: true, remoteJid: '5511900000001@s.whatsapp.net' }),
+        ],
+        isLatest: true,
+        syncType: proto.HistorySync.HistorySyncType.ON_DEMAND,
+      });
+    } finally {
+      eventBus.off('history.sync.received', listener);
+    }
+
+    // One event per distinct chat, counting only messages actually stored.
+    expect(received).toHaveLength(2);
+    const byJid = Object.fromEntries(received.map((r) => [r.jid, r.count]));
+    expect(byJid['5511900000001@s.whatsapp.net']).toBe(2);
+    expect(byJid['5511900000002@s.whatsapp.net']).toBe(1);
+  });
+
+  it('does not emit history.sync.received for bootstrap (non-on-demand) syncs', () => {
+    const received: unknown[] = [];
+    const listener = (e: unknown) => received.push(e);
+    eventBus.on('history.sync.received', listener);
+    try {
+      eventBus.publish('wa.messaging-history.set', {
+        chats: [],
+        contacts: [],
+        messages: [
+          makeHistoryMessage({ id: 'bs-1', remoteJid: '5511900000003@s.whatsapp.net' }),
+          makeHistoryMessage({ id: 'bs-2', remoteJid: '5511900000003@s.whatsapp.net' }),
+        ],
+        isLatest: true,
+        syncType: 2, // initial bootstrap / FULL — not ON_DEMAND
+      });
+    } finally {
+      eventBus.off('history.sync.received', listener);
+    }
+
+    expect(received).toHaveLength(0);
+    // Messages are still persisted regardless of syncType.
+    expect(messagesRepo.getById('bs-1')).toBeDefined();
+    expect(messagesRepo.getById('bs-2')).toBeDefined();
   });
 });

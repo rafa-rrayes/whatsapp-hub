@@ -1,6 +1,13 @@
 import { useEffect, useRef } from "react"
 import { useAuthStore } from "@/stores/auth"
 import { useWebSocketStore } from "@/stores/websocket"
+import { useSyncProgressStore } from "@/stores/sync-progress"
+import type {
+  SyncStartedEvent,
+  SyncRequestedEvent,
+  SyncReceivedEvent,
+  SyncFinishedEvent,
+} from "@/stores/sync-progress"
 import { useQueryClient } from "@tanstack/react-query"
 import type { HubEvent } from "@/lib/types"
 
@@ -67,27 +74,53 @@ export function useWebSocket() {
       }
 
       ws.onmessage = (e) => {
-        if (paused) return
+        let event: HubEvent
         try {
-          const event: HubEvent = JSON.parse(e.data)
-          addEvent(event)
-
-          // Invalidate relevant queries based on event type
-          if (event.type.startsWith("message.")) {
-            queryClient.invalidateQueries({ queryKey: ["messages"] })
-            queryClient.invalidateQueries({ queryKey: ["stats"] })
-            queryClient.invalidateQueries({ queryKey: ["chats"] })
-          } else if (event.type.startsWith("contact.")) {
-            queryClient.invalidateQueries({ queryKey: ["contacts"] })
-          } else if (event.type.startsWith("group.")) {
-            queryClient.invalidateQueries({ queryKey: ["groups"] })
-          } else if (event.type.startsWith("connection.")) {
-            queryClient.invalidateQueries({ queryKey: ["connection"] })
-          } else if (event.type.startsWith("media.")) {
-            queryClient.invalidateQueries({ queryKey: ["media"] })
-          }
+          event = JSON.parse(e.data)
         } catch {
-          // ignore parse errors
+          return
+        }
+
+        // History-sync progress events drive the inline "Sync older chats" panel.
+        // Handle them before the paused guard and the recent-events log so progress
+        // always updates and these high-frequency control events don't evict real
+        // events from the 50-item log.
+        if (event.type.startsWith("history.sync.")) {
+          const sync = useSyncProgressStore.getState()
+          switch (event.type) {
+            case "history.sync.started":
+              sync.onStarted(event.data as SyncStartedEvent)
+              break
+            case "history.sync.requested":
+              sync.onRequested(event.data as SyncRequestedEvent)
+              break
+            case "history.sync.received":
+              sync.onReceived(event.data as SyncReceivedEvent)
+              break
+            case "history.sync.finished":
+              sync.onFinished(event.data as SyncFinishedEvent)
+              break
+          }
+          return
+        }
+
+        if (paused) return
+
+        addEvent(event)
+
+        // Invalidate relevant queries based on event type
+        if (event.type.startsWith("message.")) {
+          queryClient.invalidateQueries({ queryKey: ["messages"] })
+          queryClient.invalidateQueries({ queryKey: ["stats"] })
+          queryClient.invalidateQueries({ queryKey: ["chats"] })
+        } else if (event.type.startsWith("contact.")) {
+          queryClient.invalidateQueries({ queryKey: ["contacts"] })
+        } else if (event.type.startsWith("group.")) {
+          queryClient.invalidateQueries({ queryKey: ["groups"] })
+        } else if (event.type.startsWith("connection.")) {
+          queryClient.invalidateQueries({ queryKey: ["connection"] })
+        } else if (event.type.startsWith("media.")) {
+          queryClient.invalidateQueries({ queryKey: ["media"] })
         }
       }
 

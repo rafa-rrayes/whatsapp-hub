@@ -8,6 +8,7 @@ import { groupsRepo } from '../database/repositories/groups.js';
 import { chatsRepo } from '../database/repositories/chats.js';
 import { labelsRepo } from '../database/repositories/labels.js';
 import { eventsRepo } from '../database/repositories/events.js';
+import { emitSyncReceived } from './sync-progress.js';
 import { mediaManager } from '../media/manager.js';
 import { connectionManager } from '../connection/manager.js';
 import { normalizeJid, resolveToPhoneJid, registerJidAlias } from '../utils/jid.js';
@@ -609,13 +610,29 @@ export function registerEventHandlers(): void {
 
     // Persist historical messages (metadata only — historical media keys are usually
     // expired, so we skip media downloads). Protocol messages are skipped inside the helper.
+    // Tally messages actually stored per chat so the dashboard can show per-chat progress.
+    const receivedByJid = new Map<string, number>();
     if (messages) {
       for (const msg of messages) {
         try {
-          persistMessage(msg, { queueMedia: false });
+          const stored = persistMessage(msg, { queueMedia: false });
+          if (stored && msg.key?.remoteJid) {
+            const jid = normalizeJid(msg.key.remoteJid, msg.key.remoteJidAlt);
+            receivedByJid.set(jid, (receivedByJid.get(jid) || 0) + 1);
+          }
         } catch (err) {
           log.event.error({ err }, 'Error processing history message');
         }
+      }
+    }
+
+    // Per-chat progress is emitted ONLY for user-initiated on-demand fetches
+    // (fetchMessageHistory / "Sync older chats"). The initial bootstrap and full
+    // syncs use other syncTypes and would otherwise flood the dashboard panel with
+    // thousands of messages from the first connection.
+    if (syncType === proto.HistorySync.HistorySyncType.ON_DEMAND) {
+      for (const [jid, count] of receivedByJid) {
+        emitSyncReceived({ jid, count });
       }
     }
 
