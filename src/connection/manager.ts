@@ -313,6 +313,10 @@ class ConnectionManager {
     await sock.sendPresenceUpdate(type, jid);
   }
 
+  async presenceSubscribe(jid: string): Promise<void> {
+    await this.requireSocket().presenceSubscribe(jid);
+  }
+
   async getProfilePicUrl(jid: string): Promise<string | undefined> {
     const sock = this.requireSocket();
     try {

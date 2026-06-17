@@ -41,6 +41,7 @@ export interface ApiMessage {
   location_name?: string;
   location_address?: string;
   created_at: string;
+  receipt_status?: 'sent' | 'delivered' | 'read' | 'played';
 }
 
 export interface ApiContact {

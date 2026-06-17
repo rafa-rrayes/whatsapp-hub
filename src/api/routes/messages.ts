@@ -22,7 +22,7 @@ router.get('/', asyncHandler(async (req, res) => {
     offset: clampPagination(q.offset, 0, 100000),
     order: q.order === 'asc' ? 'asc' : 'desc',
   });
-  res.json({ data: result.data.map(toApiMessage), total: result.total });
+  res.json({ data: result.data.map((m) => toApiMessage(m)), total: result.total });
 }));
 
 // GET /api/messages/search — full-text search
@@ -37,7 +37,7 @@ router.get('/search', asyncHandler(async (req, res) => {
     limit: clampPagination(req.query.limit, 50, 500),
     offset: clampPagination(req.query.offset, 0, 100000),
   });
-  res.json({ data: result.data.map(toApiMessage), total: result.total });
+  res.json({ data: result.data.map((m) => toApiMessage(m)), total: result.total });
 }));
 
 // GET /api/messages/stats — message statistics

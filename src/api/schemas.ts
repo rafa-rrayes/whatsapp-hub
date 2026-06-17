@@ -77,6 +77,10 @@ export const presenceSchema = z.object({
   jid: z.string().regex(JID_REGEX, 'Invalid JID format').optional(),
 });
 
+export const presenceSubscribeSchema = z.object({
+  jid,
+});
+
 export const profileStatusSchema = z.object({
   status: z.string().min(1, 'status text is required'),
 });

@@ -53,7 +53,7 @@ router.get('/:jid', asyncHandler(async (req, res) => {
     limit: 20,
     order: 'desc',
   });
-  res.json({ ...toApiChat(chat), recent_messages: recentMessages.data.map(toApiMessage) });
+  res.json({ ...toApiChat(chat), recent_messages: recentMessages.data.map((m) => toApiMessage(m)) });
 }));
 
 // POST /api/chats/:jid/sync-history — depth-first older-history sync for one chat.

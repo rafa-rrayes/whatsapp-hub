@@ -11,7 +11,7 @@ function bool(v: number): boolean {
   return v === 1;
 }
 
-export function toApiMessage(row: MessageRow): ApiMessage {
+export function toApiMessage(row: MessageRow, extra?: Partial<ApiMessage>): ApiMessage {
   return {
     id: row.id,
     remote_jid: row.remote_jid,
@@ -53,6 +53,7 @@ export function toApiMessage(row: MessageRow): ApiMessage {
     location_name: row.location_name,
     location_address: row.location_address,
     created_at: row.created_at,
+    ...extra,
   };
 }
 
