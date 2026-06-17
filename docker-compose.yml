@@ -1,12 +1,12 @@
 services:
   whatsapp-hub:
     build: .
-    container_name: whatsapp-hub
+    container_name: ${CONTAINER_NAME:-whatsapp-hub}
     restart: unless-stopped
     # init: true ensures PID 1 properly reaps zombie processes
     init: true
     ports:
-      - "3100:3100"
+      - "${HOST_PORT:-3100}:3100"
     volumes:
       - ${DATA_HOST_PATH:-./data}:/app/data
     environment:
