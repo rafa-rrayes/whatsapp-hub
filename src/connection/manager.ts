@@ -74,7 +74,8 @@ class ConnectionManager {
       logger,
       browser: Browsers.macOS('Desktop'),
       generateHighQualityLinkPreview: true,
-      syncFullHistory: true,
+      syncFullHistory: false,
+      shouldSyncHistoryMessage: () => true,
       markOnlineOnConnect: true,
     });
 
