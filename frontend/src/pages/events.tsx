@@ -1,9 +1,11 @@
 import { useState } from "react"
-import { useEvents, useEventTypes, usePruneEvents } from "@/hooks/use-api"
+import { useEvents, useEventTypes, usePruneEvents, useLogs } from "@/hooks/use-api"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
+import { Switch } from "@/components/ui/switch"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   Dialog,
   DialogContent,
@@ -21,11 +23,54 @@ import {
 } from "@/components/ui/table"
 import { Skeleton } from "@/components/ui/skeleton"
 import { JsonViewer } from "@/components/json-viewer"
-import { ChevronLeft, ChevronRight, Trash2, Loader2 } from "lucide-react"
+import { LogViewer } from "@/components/log-viewer"
+import {
+  ChevronLeft,
+  ChevronRight,
+  Trash2,
+  Loader2,
+  RefreshCw,
+  ScrollText,
+  Activity,
+} from "lucide-react"
 import { formatDatetime } from "@/lib/utils"
 import { toast } from "sonner"
 
 export function EventsPage() {
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight">Events &amp; Logs</h1>
+        <p className="text-sm text-muted-foreground">
+          Event audit log and live container logs
+        </p>
+      </div>
+
+      <Tabs defaultValue="events">
+        <TabsList>
+          <TabsTrigger value="events">
+            <Activity className="h-3.5 w-3.5" />
+            Events
+          </TabsTrigger>
+          <TabsTrigger value="logs">
+            <ScrollText className="h-3.5 w-3.5" />
+            Logs
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="events" className="space-y-6 mt-4">
+          <EventsTab />
+        </TabsContent>
+
+        <TabsContent value="logs" className="mt-4">
+          <LogsTab />
+        </TabsContent>
+      </Tabs>
+    </div>
+  )
+}
+
+function EventsTab() {
   const [typeFilter, setTypeFilter] = useState("")
   const [offset, setOffset] = useState(0)
   const [pruneDays, setPruneDays] = useState("30")
@@ -55,11 +100,6 @@ export function EventsPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Events</h1>
-        <p className="text-sm text-muted-foreground">Event audit log</p>
-      </div>
-
       {/* Type Summary */}
       {types?.data && types.data.length > 0 && (
         <Card>
@@ -206,5 +246,51 @@ export function EventsPage() {
         </CardContent>
       </Card>
     </div>
+  )
+}
+
+function LogsTab() {
+  const [autoRefresh, setAutoRefresh] = useState(true)
+  const { data, isLoading, isFetching, refetch } = useLogs({ autoRefresh })
+  const lines = data?.data ?? []
+
+  return (
+    <Card>
+      <CardHeader className="flex-row items-center justify-between gap-3 space-y-0 pb-3">
+        <CardTitle className="text-base">Container Logs</CardTitle>
+        <div className="flex items-center gap-4">
+          <label className="flex cursor-pointer items-center gap-2 text-xs text-muted-foreground">
+            <Switch checked={autoRefresh} onCheckedChange={setAutoRefresh} />
+            Auto-refresh
+          </label>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => refetch()}
+            disabled={isFetching}
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${isFetching ? "animate-spin" : ""}`} />
+            Refresh
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <div className="space-y-2">
+            {Array.from({ length: 8 }).map((_, i) => (
+              <Skeleton key={i} className="h-4 w-full" />
+            ))}
+          </div>
+        ) : (
+          <>
+            <LogViewer lines={lines} />
+            <p className="mt-2 text-xs text-muted-foreground">
+              Showing the most recent {lines.length} log line
+              {lines.length === 1 ? "" : "s"}.
+            </p>
+          </>
+        )}
+      </CardContent>
+    </Card>
   )
 }

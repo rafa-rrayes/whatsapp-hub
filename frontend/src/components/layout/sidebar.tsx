@@ -32,7 +32,7 @@ const navItems = [
   { to: "/groups", icon: UsersRound, label: "Groups" },
   { to: "/media", icon: Image, label: "Media" },
   { to: "/webhooks", icon: Webhook, label: "Webhooks" },
-  { to: "/events", icon: Activity, label: "Events" },
+  { to: "/events", icon: Activity, label: "Events & Logs" },
   { to: "/actions", icon: Zap, label: "Actions" },
   { to: "/connection", icon: Wifi, label: "Connection" },
   { to: "/settings", icon: Settings, label: "Settings" },

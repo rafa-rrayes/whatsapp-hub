@@ -6,6 +6,7 @@ import { mediaRepo } from '../../database/repositories/media.js';
 import { eventsRepo } from '../../database/repositories/events.js';
 import { getDb } from '../../database/index.js';
 import { clampPagination } from '../../utils/security.js';
+import { getRecentLogs } from '../../utils/log-buffer.js';
 import { asyncHandler } from '../errors.js';
 
 const router = Router();
@@ -53,6 +54,12 @@ router.delete('/events/prune', asyncHandler(async (req, res) => {
   const days = clampPagination(req.query.days, 30, 3650) || 1;
   const deleted = eventsRepo.prune(days);
   res.json({ success: true, deleted });
+}));
+
+// GET /api/stats/logs — recent application/container log lines (in-memory ring buffer)
+router.get('/logs', asyncHandler(async (req, res) => {
+  const limit = clampPagination(req.query.limit, 500, 2000) || 500;
+  res.json({ data: getRecentLogs(limit) });
 }));
 
 export default router;

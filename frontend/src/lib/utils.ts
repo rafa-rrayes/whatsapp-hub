@@ -35,7 +35,15 @@ export function formatRelativeTime(ts: number): string {
 
 export function formatDatetime(dateStr: string): string {
   if (!dateStr) return ""
-  const date = new Date(dateStr)
+  // SQLite's datetime('now') returns "YYYY-MM-DD HH:MM:SS" in UTC with no zone
+  // marker. Safari (and other strict engines) parse that as Invalid Date, which
+  // makes date-fns format() throw and crash the whole view. Normalize to
+  // ISO-8601 UTC so it parses everywhere and renders in the local timezone.
+  const normalized = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/.test(dateStr)
+    ? dateStr.replace(" ", "T") + "Z"
+    : dateStr
+  const date = new Date(normalized)
+  if (isNaN(date.getTime())) return dateStr
   if (isToday(date)) return format(date, "'Today' HH:mm:ss")
   if (isYesterday(date)) return format(date, "'Yesterday' HH:mm:ss")
   return format(date, "MMM d, yyyy HH:mm:ss")

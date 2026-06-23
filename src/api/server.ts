@@ -379,6 +379,7 @@ export function createServer() {
           'GET /api/stats/events': 'Query event log',
           'GET /api/stats/events/types': 'Event type counts',
           'DELETE /api/stats/events/prune?days=': 'Prune old events',
+          'GET /api/stats/logs?limit=': 'Recent application/container log lines',
         },
         settings: {
           'GET /api/settings': 'List runtime settings with defaults',

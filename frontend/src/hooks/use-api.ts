@@ -341,6 +341,17 @@ export function usePruneEvents() {
   })
 }
 
+// ─── Logs ─────────────────────────────────────────────────────
+
+export function useLogs(params: { limit?: number; autoRefresh?: boolean } = {}) {
+  const limit = params.limit ?? 1000
+  return useQuery({
+    queryKey: ["logs", limit],
+    queryFn: () => api.get<{ data: string[] }>(`/api/stats/logs?limit=${limit}`),
+    refetchInterval: params.autoRefresh ? 3000 : false,
+  })
+}
+
 // ─── Actions ──────────────────────────────────────────────────
 
 export function useSendText() {
