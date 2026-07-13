@@ -31,6 +31,8 @@ class ConnectionManager {
   private qrCode: string | null = null;
   private status: ConnectionStatus = 'disconnected';
   private myJid: string | null = null;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private connecting = false;
 
   getSocket(): Socket | null {
     return this.sock;
@@ -53,84 +55,124 @@ class ConnectionManager {
     return this.sock;
   }
 
-  async connect(): Promise<void> {
-    if (!fs.existsSync(config.authDir)) {
-      fs.mkdirSync(config.authDir, { recursive: true });
+  /** Cancel a pending reconnect so a stale timer can't spawn a second loop. */
+  private clearReconnectTimer(): void {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
     }
+  }
 
-    const { state, saveCreds } = await useMultiFileAuthState(config.authDir);
-    const { version } = await fetchLatestBaileysVersion();
+  /**
+   * Close the current socket and drop our reference. Nulling `this.sock` is
+   * what neutralizes the old socket: its `connection.update` handler bails on
+   * the `this.sock !== sock` guard, so a dying socket can't schedule its own
+   * reconnect or clobber shared state after we've moved on to a new one.
+   */
+  private teardownSocket(): void {
+    if (!this.sock) return;
+    try {
+      this.sock.end(undefined);
+    } catch {
+      /* already closed */
+    }
+    this.sock = null;
+  }
 
-    this.status = 'connecting';
-    eventBus.publish('connection.status', { status: this.status });
+  async connect(): Promise<void> {
+    // Cancel any pending reconnect and drop the previous socket first, so
+    // connect loops can never stack on top of each other — overlapping loops
+    // are what make the QR/status flap and the UI reload every second.
+    this.clearReconnectTimer();
+    if (this.connecting) return;
+    this.connecting = true;
 
-    this.sock = makeWASocket({
-      version,
-      auth: {
-        creds: state.creds,
-        keys: makeCacheableSignalKeyStore(state.keys, logger),
-      },
-      printQRInTerminal: true,
-      logger,
-      browser: Browsers.macOS('Desktop'),
-      generateHighQualityLinkPreview: true,
-      syncFullHistory: false,
-      shouldSyncHistoryMessage: () => true,
-      markOnlineOnConnect: true,
-    });
+    try {
+      this.teardownSocket();
 
-    // Save credentials on update
-    this.sock.ev.on('creds.update', saveCreds);
-
-    // Connection updates
-    this.sock.ev.on('connection.update', (update: Partial<ConnectionState>) => {
-      const { connection, lastDisconnect, qr } = update;
-
-      if (qr) {
-        this.qrCode = qr;
-        this.status = 'qr';
-        eventBus.publish('connection.qr', { qr });
-        eventBus.publish('connection.status', { status: this.status });
-        log.wa.info('QR code generated — scan with WhatsApp');
+      if (!fs.existsSync(config.authDir)) {
+        fs.mkdirSync(config.authDir, { recursive: true });
       }
 
-      if (connection === 'close') {
-        this.status = 'disconnected';
-        this.qrCode = null;
-        eventBus.publish('connection.status', { status: this.status });
+      const { state, saveCreds } = await useMultiFileAuthState(config.authDir);
+      const { version } = await fetchLatestBaileysVersion();
 
-        const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
-        const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+      this.status = 'connecting';
+      eventBus.publish('connection.status', { status: this.status });
 
-        if (shouldReconnect && this.retryCount < this.maxRetries) {
-          this.retryCount++;
-          const delay = Math.min(1000 * Math.pow(2, this.retryCount), 60000);
-          log.wa.info(
-            { delay: delay / 1000, attempt: this.retryCount, maxRetries: this.maxRetries },
-            'Connection closed, reconnecting'
-          );
-          setTimeout(() => this.connect(), delay);
-        } else if (!shouldReconnect) {
-          log.wa.warn('Logged out. Delete auth folder and restart to re-authenticate.');
-          eventBus.publish('connection.logged_out', {});
-        } else {
-          log.wa.error('Max reconnection attempts reached');
-          eventBus.publish('connection.failed', { retries: this.retryCount });
+      const sock = makeWASocket({
+        version,
+        auth: {
+          creds: state.creds,
+          keys: makeCacheableSignalKeyStore(state.keys, logger),
+        },
+        printQRInTerminal: true,
+        logger,
+        browser: Browsers.macOS('Desktop'),
+        generateHighQualityLinkPreview: true,
+        syncFullHistory: false,
+        shouldSyncHistoryMessage: () => true,
+        markOnlineOnConnect: true,
+      });
+      this.sock = sock;
+
+      // Save credentials on update
+      sock.ev.on('creds.update', saveCreds);
+
+      // Connection updates — ignore anything from a socket we've since replaced.
+      sock.ev.on('connection.update', (update: Partial<ConnectionState>) => {
+        if (this.sock !== sock) return;
+        const { connection, lastDisconnect, qr } = update;
+
+        if (qr) {
+          this.qrCode = qr;
+          this.status = 'qr';
+          eventBus.publish('connection.qr', { qr });
+          eventBus.publish('connection.status', { status: this.status });
+          log.wa.info('QR code generated — scan with WhatsApp');
         }
-      }
 
-      if (connection === 'open') {
-        this.status = 'connected';
-        this.retryCount = 0;
-        this.qrCode = null;
-        this.myJid = this.sock?.user?.id || null;
-        eventBus.publish('connection.status', { status: this.status, jid: this.myJid });
-        log.wa.info({ jid: this.myJid }, 'Connected');
-      }
-    });
+        if (connection === 'close') {
+          this.status = 'disconnected';
+          this.qrCode = null;
+          eventBus.publish('connection.status', { status: this.status });
 
-    // Forward ALL Baileys events to the event bus
-    this.registerEventForwarding();
+          const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
+          const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+
+          if (shouldReconnect && this.retryCount < this.maxRetries) {
+            this.retryCount++;
+            const delay = Math.min(1000 * Math.pow(2, this.retryCount), 60000);
+            log.wa.info(
+              { delay: delay / 1000, attempt: this.retryCount, maxRetries: this.maxRetries },
+              'Connection closed, reconnecting'
+            );
+            this.clearReconnectTimer();
+            this.reconnectTimer = setTimeout(() => this.connect(), delay);
+          } else if (!shouldReconnect) {
+            log.wa.warn('Logged out. Delete auth folder and restart to re-authenticate.');
+            eventBus.publish('connection.logged_out', {});
+          } else {
+            log.wa.error('Max reconnection attempts reached');
+            eventBus.publish('connection.failed', { retries: this.retryCount });
+          }
+        }
+
+        if (connection === 'open') {
+          this.status = 'connected';
+          this.retryCount = 0;
+          this.qrCode = null;
+          this.myJid = sock.user?.id || null;
+          eventBus.publish('connection.status', { status: this.status, jid: this.myJid });
+          log.wa.info({ jid: this.myJid }, 'Connected');
+        }
+      });
+
+      // Forward ALL Baileys events to the event bus
+      this.registerEventForwarding();
+    } finally {
+      this.connecting = false;
+    }
   }
 
   private forwardEvent<E extends keyof BaileysEventMap>(event: E): void {
@@ -169,14 +211,18 @@ class ConnectionManager {
   }
 
   async disconnect(): Promise<void> {
+    this.clearReconnectTimer();
     if (this.sock) {
+      const sock = this.sock;
+      // Drop our reference first so the logout-triggered 'close' can't reconnect
+      // (its handler bails on the `this.sock !== sock` guard).
+      this.sock = null;
       try {
-        await this.sock.logout();
+        await sock.logout();
       } catch (err) {
         log.wa.warn({ err }, 'Logout failed, forcing socket close');
-        this.sock.end(undefined);
+        sock.end(undefined);
       }
-      this.sock = null;
     }
     this.status = 'disconnected';
     this.qrCode = null;
@@ -185,20 +231,16 @@ class ConnectionManager {
   }
 
   async restart(): Promise<void> {
-    if (this.sock) {
-      this.sock.end(undefined);
-      this.sock = null;
-    }
+    this.clearReconnectTimer();
+    this.teardownSocket();
     this.retryCount = 0;
     await this.connect();
   }
 
   async newQR(): Promise<void> {
     // End existing socket without trying to logout (which requires active session)
-    if (this.sock) {
-      this.sock.end(undefined);
-      this.sock = null;
-    }
+    this.clearReconnectTimer();
+    this.teardownSocket();
     this.status = 'disconnected';
     this.qrCode = null;
     this.myJid = null;
