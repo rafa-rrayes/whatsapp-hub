@@ -5,6 +5,9 @@ frontend/node_modules/
 # Build output
 dist/
 public/
+__pycache__/
+*.pyc
+scripts/out/
 
 # Runtime data
 data/

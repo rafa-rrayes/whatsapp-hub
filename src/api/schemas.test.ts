@@ -241,6 +241,19 @@ describe('settingsUpdateSchema', () => {
     });
     expect(result.success).toBe(false);
   });
+
+  it('accepts local transcription mode and normalizes the language', () => {
+    const result = settingsUpdateSchema.safeParse({
+      transcriptionMode: 'fast',
+      transcriptionLanguage: 'PT',
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.transcriptionLanguage).toBe('pt');
+  });
+
+  it('rejects an unknown transcription mode', () => {
+    expect(settingsUpdateSchema.safeParse({ transcriptionMode: 'ultra' }).success).toBe(false);
+  });
 });
 
 describe('groupSubjectSchema', () => {

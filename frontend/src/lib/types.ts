@@ -2,7 +2,7 @@ export interface Message {
   id: string
   remote_jid: string
   from_jid?: string
-  from_me: number
+  from_me: boolean
   participant?: string
   timestamp: number
   push_name?: string
@@ -10,17 +10,17 @@ export interface Message {
   body?: string
   quoted_id?: string
   quoted_body?: string
-  is_forwarded: number
+  is_forwarded: boolean
   forward_score: number
-  is_starred: number
-  is_broadcast: number
-  is_ephemeral: number
+  is_starred: boolean
+  is_broadcast: boolean
+  is_ephemeral: boolean
   ephemeral_duration?: number
   edit_type: number
   edited_at?: string
-  is_deleted: number
+  is_deleted: boolean
   deleted_at?: string
-  has_media: number
+  has_media: boolean
   media_id?: string
   media_mime_type?: string
   media_size?: number
@@ -28,6 +28,8 @@ export interface Message {
   media_duration?: number
   media_width?: number
   media_height?: number
+  media_transcription?: string | null
+  media_transcription_status?: "pending" | "done" | "failed" | "skipped" | null
   reaction_emoji?: string
   reaction_target_id?: string
   poll_name?: string
@@ -36,6 +38,7 @@ export interface Message {
   longitude?: number
   location_name?: string
   location_address?: string
+  receipt_status?: "sent" | "delivered" | "read" | "played"
   raw_message?: string
   created_at: string
 }
@@ -51,8 +54,8 @@ export interface Contact {
   notify_name?: string
   short_name?: string
   phone_number?: string
-  is_business: number
-  is_group: number
+  is_business: boolean
+  is_group: boolean
   profile_pic_url?: string
   status_text?: string
   first_seen_at: string
@@ -66,8 +69,8 @@ export interface Group {
   owner_jid?: string
   creation_time?: number
   participant_count: number
-  is_announce: number
-  is_restrict: number
+  is_announce: boolean
+  is_restrict: boolean
   profile_pic_url?: string
   invite_code?: string
   first_seen_at: string
@@ -78,6 +81,9 @@ export interface Group {
 export interface GroupParticipant {
   group_jid: string
   participant_jid: string
+  phone_jid?: string
+  name?: string
+  notify_name?: string
   role: string
   added_at: string
 }
@@ -188,14 +194,18 @@ export interface EventTypeCount {
 export interface Chat {
   jid: string
   name?: string
-  is_group: number
-  is_archived: number
-  is_pinned: number
-  is_muted: number
+  is_group: boolean
+  is_archived: boolean
+  is_pinned: boolean
+  is_muted: boolean
   mute_expiry?: number
   unread_count: number
   last_message_ts?: number
   last_message_body?: string
+  last_message_id?: string
+  last_message_type?: string
+  last_message_from_me?: boolean
+  last_message_receipt_status?: "sent" | "delivered" | "read" | "played"
   updated_at: string
 }
 

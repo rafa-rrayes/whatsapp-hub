@@ -27,6 +27,13 @@ interface MessageReceiptEvent {
   receipt_status: "sent" | "delivered" | "read" | "played"
 }
 
+interface MessageTranscriptionEvent {
+  message_id: string
+  chat_jid: string
+  transcription_status: "pending" | "done" | "failed"
+  transcription: string | null
+}
+
 interface PresenceUpdateEvent {
   id: string
   presences?: Record<string, { lastKnownPresence?: string; lastSeen?: number }>
@@ -118,6 +125,17 @@ export function useDeviceEvents(): void {
               patchChat(qc, r.chat_jid, { last_message_receipt_status: r.receipt_status })
             }
           }
+          return
+        }
+
+        case "message.transcription": {
+          const update = event.data as MessageTranscriptionEvent
+          if (!update?.message_id || !update.chat_jid) return
+          patchMessage(qc, update.chat_jid, update.message_id, (message) => ({
+            ...message,
+            media_transcription: update.transcription,
+            media_transcription_status: update.transcription_status,
+          }))
           return
         }
 

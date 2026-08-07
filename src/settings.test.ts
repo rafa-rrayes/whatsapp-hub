@@ -1,14 +1,18 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
-// Mock config (provides an encryption key + env defaults) before importing settings.
+// Mock config defaults before importing settings.
 vi.mock('./config.js', () => ({
   config: {
     logLevel: 'info',
     autoDownloadMedia: true,
     maxMediaSizeMB: 100,
-    transcribeMedia: false,
-    geminiApiKey: '',
-    geminiModel: 'gemini-3.1-flash-lite',
+    transcriptionMode: 'off',
+    transcriptionLanguage: 'en',
+    crisperWhisperPython: 'python3',
+    crisperWhisperCacheDir: '/tmp/whatsapp-hub-test-models',
+    crisperWhisperComputeType: 'float32',
+    crisperWhisperCpuThreads: 0,
+    crisperWhisperTimeoutMs: 1_000,
     security: { encryptionKey: 'test-encryption-key-at-least-16-chars' },
   },
 }));
@@ -29,42 +33,38 @@ vi.mock('./utils/logger.js', () => ({
 }));
 
 const settings = await import('./settings.js');
-const { isEncrypted } = await import('./utils/encryption.js');
-
-describe('settings secret handling (geminiApiKey)', () => {
+describe('local transcription settings', () => {
   beforeEach(() => {
     store.clear();
     settings.initSettings();
   });
 
-  it('encrypts the API key at rest', () => {
-    settings.updateSettings({ geminiApiKey: 'sk-secret-123' });
-    const stored = store.get('geminiApiKey')!;
-    expect(isEncrypted(stored)).toBe(true);
-    expect(stored).not.toContain('sk-secret-123');
+  it('stores and reads the selected mode', () => {
+    settings.updateSettings({ transcriptionMode: 'best' });
+    expect(store.get('transcriptionMode')).toBe('best');
+    expect(settings.getSettings().transcriptionMode).toBe('best');
   });
 
-  it('decrypts the API key when reading runtime settings', () => {
-    settings.updateSettings({ geminiApiKey: 'sk-secret-123' });
-    expect(settings.getSettings().geminiApiKey).toBe('sk-secret-123');
+  it('stores the explicit speech language', () => {
+    settings.updateSettings({ transcriptionLanguage: 'pt' });
+    expect(settings.getSettings().transcriptionLanguage).toBe('pt');
   });
 
-  it('masks the API key value in the API output but reports isSet', () => {
-    settings.updateSettings({ geminiApiKey: 'sk-secret-123' });
-    const item = settings.getSettingsForApi().find((i) => i.key === 'geminiApiKey')!;
-    expect(item.isSecret).toBe(true);
-    expect(item.isSet).toBe(true);
-    expect(item.value).toBe('');
+  it('maps the legacy enabled boolean to Medium', () => {
+    store.set('transcribeMedia', 'true');
+    settings.initSettings();
+    expect(settings.getSettings().transcriptionMode).toBe('medium');
   });
 
-  it('reports isSet=false when no key is configured', () => {
-    const item = settings.getSettingsForApi().find((i) => i.key === 'geminiApiKey')!;
-    expect(item.isSet).toBe(false);
+  it('keeps a legacy disabled override off', () => {
+    store.set('transcribeMedia', 'false');
+    settings.initSettings();
+    expect(settings.getSettings().transcriptionMode).toBe('off');
   });
 
-  it('stores non-secret settings as plaintext', () => {
-    settings.updateSettings({ transcribeMedia: true });
-    expect(store.get('transcribeMedia')).toBe('true');
-    expect(settings.getSettings().transcribeMedia).toBe(true);
+  it('exposes mode and language through the settings API', () => {
+    const items = settings.getSettingsForApi();
+    expect(items.find((i) => i.key === 'transcriptionMode')?.value).toBe('off');
+    expect(items.find((i) => i.key === 'transcriptionLanguage')?.value).toBe('en');
   });
 });

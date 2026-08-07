@@ -18,7 +18,7 @@ WhatsApp  <-->  Baileys Connection  <-->  Event Bus  <-->  SQLite DB
 
 - **Full message capture** — text, images, video, audio, documents, stickers, locations, contacts, reactions, polls, view-once, forwards, quotes, edits, deletes
 - **Media auto-download** — organized by date in `data/media/`
-- **AI media transcription** — optional Google Gemini integration that transcribes voice notes and describes images; transcripts appear inline when you pull messages (REST/MCP) and are full-text searchable
+- **Local audio transcription** — optional CPU-only CrisperWhisper 2.0 transcription for voice notes; transcripts appear inline in REST/MCP reads and are full-text searchable
 - **Contacts & groups** — names, profile pics, participants, roles, invite codes
 - **Presence tracking** — online/offline/typing/recording status log
 - **Call log** — incoming/outgoing, video/voice, duration
@@ -393,26 +393,42 @@ Write tools advertise `readOnlyHint: false` — MCP clients should confirm with 
 
 ## Media Transcription
 
-Optionally transcribe incoming **voice notes / audio** and describe **images**
-using Google Gemini. Once enabled, the resulting text is stored on the message and
-shows up everywhere you read messages — REST API responses (`media_transcription`),
-the MCP tools (inline in rendered conversations and in search snippets), and it's
-indexed for **full-text search**, so you can search the content of your voice notes.
+Optionally transcribe incoming **voice notes / audio** locally with
+[CrisperWhisper 2.0](https://huggingface.co/nyralabs/CrisperWhisper2.0_large).
+Inference is forced onto the CPU and no audio is sent to a transcription API. The
+resulting text is stored on the message and shows up everywhere you read messages —
+REST API responses (`media_transcription`), MCP tools, and **full-text search**.
 
 **Setup:**
 
-1. Get a key from [aistudio.google.com/apikey](https://aistudio.google.com/apikey).
-2. In the dashboard go to **Settings → Media Transcription**, paste the key, and
-   toggle **Transcribe Media** on. (Or set `GEMINI_API_KEY` / `TRANSCRIBE_MEDIA=true`
-   in your environment.)
-3. New incoming audio and photos are transcribed automatically after download.
+1. Docker installations already include the CPU runtime. For a native install,
+   install `ffmpeg`, create a Python environment, and point the hub at it:
+
+   ```bash
+   python3 -m venv .venv-transcription
+   .venv-transcription/bin/pip install -r requirements-transcription.txt
+   export CRISPERWHISPER_PYTHON=.venv-transcription/bin/python
+   ```
+
+2. In **Settings → Media Transcription**, choose the quality and enter the
+   two-letter language code spoken in your voice notes. Or set
+   `TRANSCRIPTION_MODE=medium` and `TRANSCRIPTION_LANGUAGE=en` in the environment.
+3. The selected model downloads from Hugging Face on the first new audio message,
+   then stays cached under `DATA_DIR/models/crisperwhisper`.
 
 Notes:
 
-- Default model is `gemini-3.1-flash-lite` (configurable via `GEMINI_MODEL` or the UI).
-- Stickers, video, and documents are skipped; only audio and non-sticker images are processed.
+- **Best** uses `nyralabs/CrisperWhisper2.0_large`, **Medium** uses
+  `nyralabs/CrisperWhisper2.0_medium`, and **Fast** uses
+  `nyralabs/CrisperWhisper2.0_turbo`. **Off** is the default.
+- The worker uses the portable Transformers backend with `device="cpu"` and keeps
+  one model loaded between messages. `float32` is the portable default; compatible
+  CPUs can opt into `bfloat16` with `CRISPERWHISPER_COMPUTE_TYPE` to reduce memory.
+- Images, stickers, video, and documents are not processed.
 - Only **new** media is processed — existing history is left as-is.
-- The API key is encrypted at rest when `ENCRYPTION_KEY` is set, and is never returned by the API.
+- The standard CrisperWhisper 2.0 weights use the
+  [Nyra Health Non-Commercial Research License](https://huggingface.co/nyralabs/CrisperWhisper2.0_large/blob/main/LICENSE.md).
+  Commercial deployments need a separate model license from Nyra Labs.
 
 ## Example Integrations
 
@@ -472,9 +488,13 @@ ws.on("message", (data) => {
 | `MEDIA_DIR` | `./data/media` | Media storage path |
 | `AUTO_DOWNLOAD_MEDIA` | `true` | Auto-download media files |
 | `MAX_MEDIA_SIZE_MB` | `100` | Max file size to download (0 = unlimited) |
-| `TRANSCRIBE_MEDIA` | `false` | Transcribe audio / describe images via Gemini (also toggleable in Settings) |
-| `GEMINI_API_KEY` | — | Google Gemini API key (encrypted at rest when `ENCRYPTION_KEY` is set) |
-| `GEMINI_MODEL` | `gemini-3.1-flash-lite` | Gemini model used for transcription |
+| `TRANSCRIPTION_MODE` | `off` | Local CPU transcription quality: `off`, `fast`, `medium`, or `best` (also configurable in Settings) |
+| `TRANSCRIPTION_LANGUAGE` | `en` | Two-letter ISO 639-1 language code passed to CrisperWhisper |
+| `CRISPERWHISPER_PYTHON` | `python3` | Python executable containing `crisperwhisper[transformers]` (configured automatically in Docker) |
+| `CRISPERWHISPER_CACHE_DIR` | `DATA_DIR/models/crisperwhisper` | Persistent Hugging Face model cache |
+| `CRISPERWHISPER_COMPUTE_TYPE` | `float32` | CPU tensor type; `bfloat16` reduces memory on compatible CPUs |
+| `CRISPERWHISPER_CPU_THREADS` | `4` | Shared cap for PyTorch and native CPU math runtimes; increase to trade server capacity for lower latency |
+| `CRISPERWHISPER_TIMEOUT_MS` | `1800000` | Maximum time for one audio transcription |
 | `LOG_LEVEL` | `info` | Pino log level |
 | `SESSION_NAME` | `default` | Baileys auth session name |
 | `BEHIND_PROXY` | `false` | Set `true` behind a TLS reverse proxy (enables HSTS, CSP upgrade-insecure-requests, trust proxy) |

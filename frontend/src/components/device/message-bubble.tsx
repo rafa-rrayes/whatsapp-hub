@@ -24,6 +24,7 @@ import { ReactionPicker } from "./reaction-picker"
 import { ImageAttachment } from "./media/image-attachment"
 import { VideoAttachment } from "./media/video-attachment"
 import { AudioPlayer } from "./media/audio-player"
+import { AudioTranscription } from "./media/audio-transcription"
 import { DocumentTile } from "./media/document-tile"
 import { StickerAttachment } from "./media/sticker-attachment"
 import { formatBubbleTime, linkify, senderColor, displayName } from "./format"
@@ -135,8 +136,9 @@ export function MessageBubble({ item, chatJid, isGroup }: { item: MessageItem; c
 
   const react = (emoji: string) => sendReaction(qc, chatJid, m.id, emoji)
   const copy = () => {
-    if (m.body) {
-      navigator.clipboard.writeText(m.body)
+    const text = m.body || m.media_transcription
+    if (text) {
+      navigator.clipboard.writeText(text)
       toast.success("Copied")
     }
   }
@@ -156,6 +158,9 @@ export function MessageBubble({ item, chatJid, isGroup }: { item: MessageItem; c
   const senderJid = m.participant || m.from_jid || chatJid
   const showSender = isGroup && !out && item.firstOfGroup
   const hasMediaBody = ["image", "video", "audio", "ptt", "document"].includes(m.message_type ?? "")
+  const hasTranscriptionPanel = ["audio", "ptt"].includes(m.message_type ?? "")
+    && Boolean(m.media_transcription || m.media_transcription_status)
+  const hasBubbleText = Boolean(m.body || hasTranscriptionPanel)
 
   return (
     <div
@@ -207,7 +212,7 @@ export function MessageBubble({ item, chatJid, isGroup }: { item: MessageItem; c
                 >
                   Reply
                 </DropdownMenuItem>
-                {m.body && (
+                {(m.body || m.media_transcription) && (
                   <DropdownMenuItem
                     className="h-10 px-4 text-[14.5px] focus:bg-wa-hover-deep focus:text-wa-text-strong"
                     onClick={copy}
@@ -258,6 +263,7 @@ export function MessageBubble({ item, chatJid, isGroup }: { item: MessageItem; c
           ) : (
             <>
               <MediaContent message={m} />
+              <AudioTranscription message={m} />
 
               {m.message_type === "location" && (
                 <a
@@ -292,8 +298,8 @@ export function MessageBubble({ item, chatJid, isGroup }: { item: MessageItem; c
           <span
             className={cn(
               "pointer-events-none absolute bottom-[3px] right-[7px] flex items-center gap-1 text-[11px]",
-              hasMediaBody && !m.body ? "rounded bg-black/40 px-1 text-white/90" : "text-wa-bubble-meta",
-              hasMediaBody && !m.body && "bottom-[6px] right-[8px]"
+              hasMediaBody && !hasBubbleText ? "rounded bg-black/40 px-1 text-white/90" : "text-wa-bubble-meta",
+              hasMediaBody && !hasBubbleText && "bottom-[6px] right-[8px]"
             )}
           >
             {m._failed ? (

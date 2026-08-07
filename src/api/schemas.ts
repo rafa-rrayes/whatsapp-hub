@@ -95,9 +95,11 @@ export const settingsUpdateSchema = z.object({
   logLevel: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).optional(),
   autoDownloadMedia: z.boolean().optional(),
   maxMediaSizeMB: z.number().int().min(0).optional(),
-  transcribeMedia: z.boolean().optional(),
-  geminiApiKey: z.string().max(256, 'geminiApiKey must be under 256 characters').optional(),
-  geminiModel: z.string().min(1, 'geminiModel is required').max(100, 'geminiModel must be under 100 characters').optional(),
+  transcriptionMode: z.enum(['off', 'fast', 'medium', 'best']).optional(),
+  transcriptionLanguage: z.string()
+    .regex(/^[a-z]{2}$/i, 'transcriptionLanguage must be a two-letter ISO 639-1 code')
+    .transform((value) => value.toLowerCase())
+    .optional(),
 }).refine((d) => Object.keys(d).length > 0, { message: 'At least one setting is required' });
 
 // Group operation schemas

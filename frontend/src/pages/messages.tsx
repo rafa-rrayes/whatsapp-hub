@@ -289,7 +289,7 @@ export function MessagesPage() {
                                         {msg.push_name}
                                       </p>
                                     )}
-                                    {msg.has_media === 1 && msg.media_id && (
+                                    {msg.has_media && msg.media_id && (
                                       <p>
                                         <span className="text-muted-foreground">Media: </span>
                                         <a

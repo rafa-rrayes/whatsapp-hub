@@ -3,8 +3,8 @@ import type { Migration } from './index.js';
 
 /**
  * Adds AI media transcription columns to the messages table and rebuilds the
- * FTS5 index to include the transcription text, so transcribed audio and image
- * descriptions become full-text searchable alongside message bodies.
+ * FTS5 index to include transcription text, so audio transcripts become
+ * full-text searchable alongside message bodies.
  */
 export const migration: Migration = {
   id: '005-media-transcription',

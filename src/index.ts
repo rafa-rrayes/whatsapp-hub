@@ -12,6 +12,7 @@ import { startAutoPrune, stopAutoPrune } from './utils/auto-prune.js';
 import { pruneOAuthState } from './mcp/oauth/store.js';
 import { log } from './utils/logger.js';
 import { startErrorServer } from './error-server.js';
+import { stopTranscriptionWorker } from './media/transcribe.js';
 
 async function main() {
   log.boot.info('WhatsApp Hub — Personal WhatsApp API');
@@ -78,7 +79,10 @@ async function main() {
     // 5. Flush webhook queue
     await webhookDispatcher.drain();
 
-    // 6. Close database
+    // 6. Stop the local model process and release its CPU/RAM.
+    stopTranscriptionWorker();
+
+    // 7. Close database
     closeDb();
 
     log.boot.info('Shutdown complete');

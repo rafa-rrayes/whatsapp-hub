@@ -1,96 +1,107 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-// Provide a fake configured Gemini key/model without loading the real settings stack.
-vi.mock('../settings.js', () => ({
-  getSettings: () => ({ geminiApiKey: 'test-key', geminiModel: 'gemini-3.1-flash-lite' }),
+vi.mock('../config.js', () => ({
+  config: {
+    crisperWhisperPython: 'python3',
+    crisperWhisperCacheDir: '/tmp/whatsapp-hub-test-models',
+    crisperWhisperComputeType: 'float32',
+    crisperWhisperCpuThreads: 0,
+    crisperWhisperTimeoutMs: 1_000,
+  },
 }));
 
-import { transcribeMedia, transcriptionKindFor } from './transcribe.js';
+import {
+  isAudioMimeType,
+  LocalTranscriber,
+  type LocalTranscriberOptions,
+} from './transcribe.js';
+import { CRISPER_WHISPER_MODEL_BY_MODE } from './transcription-modes.js';
 
-describe('transcriptionKindFor', () => {
-  it('transcribes audio (ignoring codec params)', () => {
-    expect(transcriptionKindFor('audio/ogg; codecs=opus')).toBe('audio');
-    expect(transcriptionKindFor('audio/mpeg')).toBe('audio');
+const clients: LocalTranscriber[] = [];
+
+function testClient(workerSource: string, timeoutMs = 1_000): LocalTranscriber {
+  const options: LocalTranscriberOptions = {
+    command: process.execPath,
+    args: ['--input-type=module', '--eval', workerSource],
+    timeoutMs,
+  };
+  const client = new LocalTranscriber(options);
+  clients.push(client);
+  return client;
+}
+
+afterEach(() => {
+  for (const client of clients.splice(0)) client.stop('test cleanup');
+});
+
+describe('local transcription configuration', () => {
+  it('recognizes audio mime types and ignores codec parameters', () => {
+    expect(isAudioMimeType('audio/ogg; codecs=opus')).toBe(true);
+    expect(isAudioMimeType('audio/mpeg')).toBe(true);
+    expect(isAudioMimeType('image/png')).toBe(false);
+    expect(isAudioMimeType('video/mp4')).toBe(false);
   });
 
-  it('describes images but skips stickers', () => {
-    expect(transcriptionKindFor('image/jpeg')).toBe('image');
-    expect(transcriptionKindFor('image/png')).toBe('image');
-    expect(transcriptionKindFor('image/webp')).toBeNull();
-  });
-
-  it('skips video and documents', () => {
-    expect(transcriptionKindFor('video/mp4')).toBeNull();
-    expect(transcriptionKindFor('application/pdf')).toBeNull();
+  it('maps the quality modes to CrisperWhisper 2.0 model shorthands', () => {
+    expect(CRISPER_WHISPER_MODEL_BY_MODE).toEqual({
+      fast: 'turbo',
+      medium: 'medium',
+      best: 'large',
+    });
   });
 });
 
-describe('transcribeMedia', () => {
-  afterEach(() => {
-    vi.unstubAllGlobals();
+describe('LocalTranscriber', () => {
+  it('uses a persistent JSON-lines worker and trims its response', async () => {
+    const client = testClient(`
+      import readline from 'node:readline';
+      const lines = readline.createInterface({ input: process.stdin });
+      lines.on('line', (line) => {
+        const request = JSON.parse(line);
+        process.stdout.write(JSON.stringify({
+          id: request.id,
+          text: '  ' + request.model + ':' + request.language + '  '
+        }) + '\\n');
+      });
+    `);
+
+    await expect(client.transcribe({
+      audioPath: '/tmp/voice.ogg',
+      mode: 'fast',
+      language: 'pt',
+    })).resolves.toBe('turbo:pt');
+
+    await expect(client.transcribe({
+      audioPath: '/tmp/voice-2.ogg',
+      mode: 'best',
+      language: 'en',
+    })).resolves.toBe('large:en');
   });
 
-  it('builds the Gemini request and parses the response', async () => {
-    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) =>
-      new Response(
-        JSON.stringify({ candidates: [{ content: { parts: [{ text: '  hello world  ' }] } }] }),
-        { status: 200, headers: { 'content-type': 'application/json' } }
-      )
-    );
-    vi.stubGlobal('fetch', fetchMock);
+  it('surfaces a worker transcription error', async () => {
+    const client = testClient(`
+      import readline from 'node:readline';
+      const lines = readline.createInterface({ input: process.stdin });
+      lines.on('line', (line) => {
+        const request = JSON.parse(line);
+        process.stdout.write(JSON.stringify({ id: request.id, error: 'decode failed' }) + '\\n');
+      });
+    `);
 
-    const out = await transcribeMedia({
-      buffer: Buffer.from('abc'),
-      mimeType: 'audio/ogg; codecs=opus',
-      kind: 'audio',
-    });
-
-    expect(out).toBe('hello world'); // trimmed
-
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toContain('gemini-3.1-flash-lite:generateContent');
-    expect((init.headers as Record<string, string>)['x-goog-api-key']).toBe('test-key');
-
-    const body = JSON.parse(init.body as string);
-    const parts = body.contents[0].parts;
-    expect(parts[0].inline_data.mime_type).toBe('audio/ogg'); // codec param stripped
-    expect(parts[0].inline_data.data).toBe(Buffer.from('abc').toString('base64'));
-    expect(parts[1].text).toMatch(/transcribe/i);
+    await expect(client.transcribe({
+      audioPath: '/tmp/broken.ogg',
+      mode: 'medium',
+      language: 'en',
+    })).rejects.toThrow('decode failed');
   });
 
-  it('uses the image prompt for images', async () => {
-    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) =>
-      new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: 'a cat' }] } }] }), {
-        status: 200,
-      })
-    );
-    vi.stubGlobal('fetch', fetchMock);
+  it('stops a worker that exceeds the configured timeout', async () => {
+    const client = testClient(`process.stdin.resume();`, 25);
 
-    await transcribeMedia({ buffer: Buffer.from('x'), mimeType: 'image/jpeg', kind: 'image' });
-    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
-    expect(body.contents[0].parts[1].text).toMatch(/describe/i);
-  });
-
-  it('throws with the API error message on non-2xx', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () =>
-        new Response(JSON.stringify({ error: { message: 'invalid api key' } }), { status: 400 })
-      )
-    );
-    await expect(
-      transcribeMedia({ buffer: Buffer.from('x'), mimeType: 'image/jpeg', kind: 'image' })
-    ).rejects.toThrow('invalid api key');
-  });
-
-  it('rejects oversize input before calling the API', async () => {
-    const fetchMock = vi.fn();
-    vi.stubGlobal('fetch', fetchMock);
-    const big = Buffer.alloc(19 * 1024 * 1024);
-    await expect(
-      transcribeMedia({ buffer: big, mimeType: 'image/jpeg', kind: 'image' })
-    ).rejects.toThrow(/too large/i);
-    expect(fetchMock).not.toHaveBeenCalled();
+    await expect(client.transcribe({
+      audioPath: '/tmp/slow.ogg',
+      mode: 'fast',
+      language: 'en',
+    })).rejects.toThrow(/timed out/i);
   });
 });

@@ -1,107 +1,205 @@
-import { getSettings } from '../settings.js';
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { config } from '../config.js';
+import {
+  CRISPER_WHISPER_MODEL_BY_MODE,
+  type EnabledTranscriptionMode,
+} from './transcription-modes.js';
 
-const GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models';
-/** Gemini inline-data requests must stay under 20 MB total — keep headroom. */
-const MAX_INLINE_BYTES = 18 * 1024 * 1024;
-const REQUEST_TIMEOUT_MS = 60_000;
+const DEFAULT_WORKER_PATH = fileURLToPath(
+  new URL('../../scripts/crisperwhisper_worker.py', import.meta.url)
+);
+const MAX_STDERR_CHARS = 8_000;
 
-export type TranscribeKind = 'audio' | 'image';
-
-const PROMPTS: Record<TranscribeKind, string> = {
-  audio:
-    'Transcribe this voice message verbatim into text. ' +
-    'Respond with only the transcription — no preamble, labels, or quotation marks. ' +
-    'If there is no intelligible speech, respond with an empty string.',
-  image:
-    'Describe this image as accurately as you can, in one or two sentences for someone who cannot see it. ' +
-    'Focus on the main subject and any clearly legible text. Respond with only the description and text extracted.',
-};
-
-interface GeminiResponse {
-  candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-  promptFeedback?: { blockReason?: string };
-  error?: { message?: string };
+export function isAudioMimeType(mimeType: string): boolean {
+  return (mimeType.split(';')[0] || '').trim().toLowerCase().startsWith('audio/');
 }
 
-/** Strip parameters (e.g. "; codecs=opus") and normalize a mime type. */
-function baseMime(mimeType: string): string {
-  return (mimeType.split(';')[0] || '').trim().toLowerCase();
+export interface TranscribeAudioOptions {
+  audioPath: string;
+  mode: EnabledTranscriptionMode;
+  language: string;
+}
+
+interface WorkerRequest extends TranscribeAudioOptions {
+  id: number;
+  model: string;
+}
+
+interface WorkerResponse {
+  id: number;
+  text?: string;
+  error?: string;
+}
+
+interface PendingRequest {
+  resolve: (text: string) => void;
+  reject: (error: Error) => void;
+  timeout: NodeJS.Timeout;
+}
+
+export interface LocalTranscriberOptions {
+  command: string;
+  args: string[];
+  timeoutMs: number;
+  env?: NodeJS.ProcessEnv;
 }
 
 /**
- * Decide whether a media item should be processed and how.
- * Audio is transcribed; non-sticker images are described. Stickers (image/webp),
- * video and documents are skipped.
+ * Persistent JSON-lines client for the Python inference worker. Keeping one
+ * worker alive avoids reloading a multi-gigabyte model for every voice note.
  */
-export function transcriptionKindFor(mimeType: string): TranscribeKind | null {
-  const m = baseMime(mimeType);
-  if (m.startsWith('audio/')) return 'audio';
-  if (m.startsWith('image/') && m !== 'image/webp') return 'image';
-  return null;
-}
+export class LocalTranscriber {
+  private worker: ChildProcessWithoutNullStreams | undefined;
+  private stdoutBuffer = '';
+  private stderrTail = '';
+  private nextId = 1;
+  private readonly pending = new Map<number, PendingRequest>();
 
-export interface TranscribeOptions {
-  buffer: Buffer;
-  mimeType: string;
-  kind: TranscribeKind;
-}
+  constructor(private readonly options: LocalTranscriberOptions) {}
 
-/**
- * Send media to Google Gemini and return the transcription (audio) or
- * description (image). Throws on misconfiguration, oversize input, network/API
- * errors, or blocked content. Returns '' when the model produced no text.
- */
-export async function transcribeMedia(opts: TranscribeOptions): Promise<string> {
-  const { geminiApiKey, geminiModel } = getSettings();
-  if (!geminiApiKey) throw new Error('Gemini API key is not configured');
+  async transcribe(opts: TranscribeAudioOptions): Promise<string> {
+    const worker = this.ensureWorker();
+    const id = this.nextId++;
+    const request: WorkerRequest = {
+      id,
+      audioPath: opts.audioPath,
+      mode: opts.mode,
+      language: opts.language,
+      model: CRISPER_WHISPER_MODEL_BY_MODE[opts.mode],
+    };
 
-  if (opts.buffer.length > MAX_INLINE_BYTES) {
-    const mb = Math.round(opts.buffer.length / 1024 / 1024);
-    throw new Error(`Media too large for inline transcription (${mb}MB > 18MB)`);
+    return new Promise<string>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        if (!this.pending.delete(id)) return;
+        reject(new Error(`Local transcription timed out after ${this.options.timeoutMs}ms`));
+        this.stop('Transcription worker stopped after a timeout');
+      }, this.options.timeoutMs);
+
+      this.pending.set(id, { resolve, reject, timeout });
+      worker.stdin.write(`${JSON.stringify(request)}\n`, (error) => {
+        if (!error) return;
+        const pending = this.pending.get(id);
+        if (!pending) return;
+        clearTimeout(pending.timeout);
+        this.pending.delete(id);
+        pending.reject(new Error(`Could not send work to local transcription process: ${error.message}`));
+      });
+    });
   }
 
-  const requestBody = {
-    contents: [
-      {
-        parts: [
-          { inline_data: { mime_type: baseMime(opts.mimeType), data: opts.buffer.toString('base64') } },
-          { text: PROMPTS[opts.kind] },
-        ],
-      },
-    ],
-  };
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-
-  try {
-    const res = await fetch(
-      `${GEMINI_ENDPOINT}/${encodeURIComponent(geminiModel)}:generateContent`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-goog-api-key': geminiApiKey,
-        },
-        body: JSON.stringify(requestBody),
-        signal: controller.signal,
-      }
-    );
-
-    const json = (await res.json().catch(() => ({}))) as GeminiResponse;
-
-    if (!res.ok) {
-      throw new Error(`Gemini request failed: ${json.error?.message || `HTTP ${res.status}`}`);
-    }
-    if (json.promptFeedback?.blockReason) {
-      throw new Error(`Gemini blocked the request: ${json.promptFeedback.blockReason}`);
-    }
-
-    return (json.candidates?.[0]?.content?.parts ?? [])
-      .map((p) => p.text ?? '')
-      .join('')
-      .trim();
-  } finally {
-    clearTimeout(timeout);
+  stop(reason = 'Local transcription worker stopped'): void {
+    const worker = this.worker;
+    this.worker = undefined;
+    if (worker && !worker.killed) worker.kill('SIGTERM');
+    this.rejectPending(new Error(reason));
+    this.stdoutBuffer = '';
+    this.stderrTail = '';
   }
+
+  private ensureWorker(): ChildProcessWithoutNullStreams {
+    if (this.worker && !this.worker.killed) return this.worker;
+
+    const worker = spawn(this.options.command, this.options.args, {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: { ...process.env, ...this.options.env },
+    });
+    this.worker = worker;
+
+    worker.stdout.setEncoding('utf8');
+    worker.stdout.on('data', (chunk: string) => this.handleStdout(chunk));
+
+    worker.stderr.setEncoding('utf8');
+    worker.stderr.on('data', (chunk: string) => {
+      this.stderrTail = `${this.stderrTail}${chunk}`.slice(-MAX_STDERR_CHARS);
+    });
+
+    worker.once('error', (error) => {
+      this.handleWorkerStopped(worker, `Local transcription worker failed to start: ${error.message}`);
+    });
+    worker.once('exit', (code, signal) => {
+      const detail = this.stderrTail.trim();
+      const suffix = detail ? `\n${detail}` : '';
+      this.handleWorkerStopped(
+        worker,
+        `Local transcription worker exited (code=${String(code)}, signal=${String(signal)})${suffix}`
+      );
+    });
+
+    return worker;
+  }
+
+  private handleStdout(chunk: string): void {
+    this.stdoutBuffer += chunk;
+    let newline = this.stdoutBuffer.indexOf('\n');
+    while (newline >= 0) {
+      const line = this.stdoutBuffer.slice(0, newline).trim();
+      this.stdoutBuffer = this.stdoutBuffer.slice(newline + 1);
+      if (line) this.handleResponseLine(line);
+      newline = this.stdoutBuffer.indexOf('\n');
+    }
+  }
+
+  private handleResponseLine(line: string): void {
+    let response: WorkerResponse;
+    try {
+      response = JSON.parse(line) as WorkerResponse;
+    } catch {
+      this.stop(`Local transcription worker returned invalid output: ${line.slice(0, 500)}`);
+      return;
+    }
+
+    if (!Number.isInteger(response.id)) return;
+    const pending = this.pending.get(response.id);
+    if (!pending) return;
+
+    clearTimeout(pending.timeout);
+    this.pending.delete(response.id);
+    if (response.error) {
+      pending.reject(new Error(response.error));
+    } else {
+      pending.resolve((response.text ?? '').trim());
+    }
+  }
+
+  private handleWorkerStopped(worker: ChildProcessWithoutNullStreams, message: string): void {
+    if (this.worker !== worker) return;
+    this.worker = undefined;
+    this.rejectPending(new Error(message));
+  }
+
+  private rejectPending(error: Error): void {
+    for (const pending of this.pending.values()) {
+      clearTimeout(pending.timeout);
+      pending.reject(error);
+    }
+    this.pending.clear();
+  }
+}
+
+const localTranscriber = new LocalTranscriber({
+  command: config.crisperWhisperPython,
+  args: ['-u', DEFAULT_WORKER_PATH],
+  timeoutMs: config.crisperWhisperTimeoutMs,
+  env: {
+    OMP_NUM_THREADS: String(config.crisperWhisperCpuThreads),
+    MKL_NUM_THREADS: String(config.crisperWhisperCpuThreads),
+    OPENBLAS_NUM_THREADS: String(config.crisperWhisperCpuThreads),
+    NUMEXPR_NUM_THREADS: String(config.crisperWhisperCpuThreads),
+    VECLIB_MAXIMUM_THREADS: String(config.crisperWhisperCpuThreads),
+    TOKENIZERS_PARALLELISM: 'false',
+    CUDA_VISIBLE_DEVICES: '',
+    HF_HOME: config.crisperWhisperCacheDir,
+    HF_HUB_DISABLE_TELEMETRY: '1',
+    CRISPERWHISPER_COMPUTE_TYPE: config.crisperWhisperComputeType,
+    CRISPERWHISPER_CPU_THREADS: String(config.crisperWhisperCpuThreads),
+  },
+});
+
+export function transcribeAudio(opts: TranscribeAudioOptions): Promise<string> {
+  return localTranscriber.transcribe(opts);
+}
+
+export function stopTranscriptionWorker(): void {
+  localTranscriber.stop();
 }

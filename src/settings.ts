@@ -2,14 +2,19 @@ import { config } from './config.js';
 import { settingsRepo } from './database/repositories/settings.js';
 import { logger } from './utils/logger.js';
 import { encryptSetting, maybeDecryptSetting } from './utils/encryption.js';
+import { stopTranscriptionWorker } from './media/transcribe.js';
+import {
+  normalizeTranscriptionLanguage,
+  normalizeTranscriptionMode,
+  type TranscriptionMode,
+} from './media/transcription-modes.js';
 
 export interface RuntimeSettings {
   logLevel: string;
   autoDownloadMedia: boolean;
   maxMediaSizeMB: number;
-  transcribeMedia: boolean;
-  geminiApiKey: string;
-  geminiModel: string;
+  transcriptionMode: TranscriptionMode;
+  transcriptionLanguage: string;
 }
 
 export interface SettingItem {
@@ -47,20 +52,14 @@ const SETTING_DEFS: Record<string, SettingDef<unknown>> = {
     parse: (raw: string) => parseInt(raw, 10),
     serialize: (val) => String(val),
   },
-  transcribeMedia: {
-    envDefault: () => config.transcribeMedia,
-    parse: (raw: string) => raw === 'true',
-    serialize: (val) => String(val),
-  },
-  geminiApiKey: {
-    envDefault: () => config.geminiApiKey,
-    parse: (raw: string) => raw,
+  transcriptionMode: {
+    envDefault: () => config.transcriptionMode,
+    parse: (raw: string) => normalizeTranscriptionMode(raw, config.transcriptionMode),
     serialize: (val) => val as string,
-    secret: true,
   },
-  geminiModel: {
-    envDefault: () => config.geminiModel,
-    parse: (raw: string) => raw,
+  transcriptionLanguage: {
+    envDefault: () => config.transcriptionLanguage,
+    parse: (raw: string) => normalizeTranscriptionLanguage(raw, config.transcriptionLanguage),
     serialize: (val) => val as string,
   },
 };
@@ -69,9 +68,8 @@ let cache: RuntimeSettings = {
   logLevel: config.logLevel,
   autoDownloadMedia: config.autoDownloadMedia,
   maxMediaSizeMB: config.maxMediaSizeMB,
-  transcribeMedia: config.transcribeMedia,
-  geminiApiKey: config.geminiApiKey,
-  geminiModel: config.geminiModel,
+  transcriptionMode: config.transcriptionMode,
+  transcriptionLanguage: config.transcriptionLanguage,
 };
 
 function buildCache(): RuntimeSettings {
@@ -81,6 +79,12 @@ function buildCache(): RuntimeSettings {
   const settings: Record<string, unknown> = {};
   for (const [key, def] of Object.entries(SETTING_DEFS)) {
     let dbVal = dbMap.get(key);
+    // Compatibility for the former remote-transcription boolean in the runtime
+    // settings table: enabled becomes Medium, disabled remains Off.
+    const legacyTranscription = dbMap.get('transcribeMedia');
+    if (key === 'transcriptionMode' && dbVal === undefined && legacyTranscription !== undefined) {
+      dbVal = legacyTranscription === 'true' ? 'medium' : 'off';
+    }
     if (dbVal !== undefined && def.secret) dbVal = maybeDecryptSetting(dbVal);
     settings[key] = dbVal !== undefined ? def.parse(dbVal) : def.envDefault();
   }
@@ -89,6 +93,7 @@ function buildCache(): RuntimeSettings {
 
 function applySideEffects(settings: RuntimeSettings): void {
   logger.level = settings.logLevel;
+  if (settings.transcriptionMode === 'off') stopTranscriptionWorker();
 }
 
 export function initSettings(): void {

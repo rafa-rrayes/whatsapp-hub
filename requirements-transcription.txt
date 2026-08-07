@@ -1,0 +1,17 @@
+# Keep the worker API stable while using the portable Transformers backend.
+crisperwhisper==2.0.2
+accelerate>=0.26
+
+# CrisperWhisper 2.0.2's Transformers hallucination-mitigation path imports
+# ctranslate2 unconditionally. Use the portable upstream runtime rather than
+# Nyralabs' x86-only CT2 fork; inference itself remains Transformers/CPU-only.
+ctranslate2>=4.7,<5
+
+# Current Transformers/PyTorch on regular Linux, Windows, and Apple Silicon.
+transformers>=4.40; sys_platform != "darwin" or platform_machine != "x86_64"
+torch>=2.4; sys_platform != "darwin" or platform_machine != "x86_64"
+
+# PyTorch stopped publishing newer Intel Mac wheels. These are the compatible
+# versions recommended by CrisperWhisper's own installation documentation.
+transformers==4.49.*; sys_platform == "darwin" and platform_machine == "x86_64"
+torch==2.2.*; sys_platform == "darwin" and platform_machine == "x86_64"

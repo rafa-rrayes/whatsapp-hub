@@ -1,6 +1,10 @@
 import dotenv from 'dotenv';
 import path from 'path';
 import { isInsecureDefaultKey, generateSecureKey } from './utils/security.js';
+import {
+  normalizeTranscriptionLanguage,
+  normalizeTranscriptionMode,
+} from './media/transcription-modes.js';
 
 dotenv.config();
 
@@ -57,10 +61,26 @@ export const config = {
   maxMediaSizeMB: parseInt(process.env.MAX_MEDIA_SIZE_MB || '100', 10),
   autoDownloadMedia: process.env.AUTO_DOWNLOAD_MEDIA !== 'false',
 
-  // Media transcription via Google Gemini (audio → transcript, image → description)
-  transcribeMedia: process.env.TRANSCRIBE_MEDIA === 'true',
-  geminiApiKey: process.env.GEMINI_API_KEY || '',
-  geminiModel: process.env.GEMINI_MODEL || 'gemini-3.1-flash-lite',
+  // Local, CPU-only audio transcription via CrisperWhisper 2.0. The legacy
+  // TRANSCRIBE_MEDIA=true switch maps to Medium when TRANSCRIPTION_MODE is absent.
+  transcriptionMode: normalizeTranscriptionMode(
+    process.env.TRANSCRIPTION_MODE,
+    process.env.TRANSCRIBE_MEDIA === 'true' ? 'medium' : 'off'
+  ),
+  transcriptionLanguage: normalizeTranscriptionLanguage(process.env.TRANSCRIPTION_LANGUAGE),
+  crisperWhisperPython: process.env.CRISPERWHISPER_PYTHON || 'python3',
+  crisperWhisperCacheDir:
+    process.env.CRISPERWHISPER_CACHE_DIR || path.join(process.env.DATA_DIR || './data', 'models', 'crisperwhisper'),
+  crisperWhisperComputeType:
+    process.env.CRISPERWHISPER_COMPUTE_TYPE === 'bfloat16' ? 'bfloat16' : 'float32',
+  crisperWhisperCpuThreads: Math.max(
+    1,
+    parseInt(process.env.CRISPERWHISPER_CPU_THREADS || '4', 10) || 4
+  ),
+  crisperWhisperTimeoutMs: Math.max(
+    1_000,
+    parseInt(process.env.CRISPERWHISPER_TIMEOUT_MS || '1800000', 10) || 1_800_000
+  ),
 
   webhookUrls: (process.env.WEBHOOK_URLS || '')
     .split(',')

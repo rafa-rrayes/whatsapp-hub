@@ -19,6 +19,12 @@ import { toast } from "sonner"
 import type { SettingItem } from "@/lib/types"
 
 const LOG_LEVELS = ["trace", "debug", "info", "warn", "error", "fatal"] as const
+const TRANSCRIPTION_MODES = [
+  { value: "off", label: "Off" },
+  { value: "fast", label: "Fast" },
+  { value: "medium", label: "Medium" },
+  { value: "best", label: "Best" },
+] as const
 
 function findSetting(items: SettingItem[] | undefined, key: string) {
   return items?.find((s) => s.key === key)
@@ -31,11 +37,8 @@ export function SettingsPage() {
   const [logLevel, setLogLevel] = useState("info")
   const [autoDownloadMedia, setAutoDownloadMedia] = useState(true)
   const [maxMediaSizeMB, setMaxMediaSizeMB] = useState(100)
-  const [transcribeMedia, setTranscribeMedia] = useState(false)
-  const [geminiModel, setGeminiModel] = useState("gemini-3.1-flash-lite")
-  // The API key is never returned by the server; this holds a newly typed value.
-  const [geminiApiKey, setGeminiApiKey] = useState("")
-  const geminiKeySet = findSetting(data?.data, "geminiApiKey")?.isSet ?? false
+  const [transcriptionMode, setTranscriptionMode] = useState("off")
+  const [transcriptionLanguage, setTranscriptionLanguage] = useState("en")
 
   // Sync local state from fetched data
   useEffect(() => {
@@ -47,10 +50,10 @@ export function SettingsPage() {
     if (adm) setAutoDownloadMedia(adm.value as boolean)
     const mms = findSetting(items, "maxMediaSizeMB")
     if (mms) setMaxMediaSizeMB(mms.value as number)
-    const tm = findSetting(items, "transcribeMedia")
-    if (tm) setTranscribeMedia(tm.value as boolean)
-    const gm = findSetting(items, "geminiModel")
-    if (gm) setGeminiModel(gm.value as string)
+    const tm = findSetting(items, "transcriptionMode")
+    if (tm) setTranscriptionMode(tm.value as string)
+    const tl = findSetting(items, "transcriptionLanguage")
+    if (tl) setTranscriptionLanguage(tl.value as string)
   }, [data])
 
   function handleSave() {
@@ -58,16 +61,11 @@ export function SettingsPage() {
       logLevel,
       autoDownloadMedia,
       maxMediaSizeMB,
-      transcribeMedia,
-      geminiModel,
+      transcriptionMode,
+      transcriptionLanguage: transcriptionLanguage.trim().toLowerCase(),
     }
-    // Only send the API key when the user typed a new one (empty = leave unchanged).
-    if (geminiApiKey.trim()) payload.geminiApiKey = geminiApiKey.trim()
     updateSettings.mutate(payload, {
-      onSuccess: () => {
-        toast.success("Settings saved")
-        setGeminiApiKey("") // don't keep the key in the field
-      },
+      onSuccess: () => toast.success("Settings saved"),
       onError: (e) => toast.error(e.message),
     })
   }
@@ -80,9 +78,8 @@ export function SettingsPage() {
     if (key === "logLevel") setLogLevel(defaultVal as string)
     if (key === "autoDownloadMedia") setAutoDownloadMedia(defaultVal as boolean)
     if (key === "maxMediaSizeMB") setMaxMediaSizeMB(defaultVal as number)
-    if (key === "transcribeMedia") setTranscribeMedia(defaultVal as boolean)
-    if (key === "geminiModel") setGeminiModel(defaultVal as string)
-    if (key === "geminiApiKey") setGeminiApiKey("")
+    if (key === "transcriptionMode") setTranscriptionMode(defaultVal as string)
+    if (key === "transcriptionLanguage") setTranscriptionLanguage(defaultVal as string)
     // Save just this key with default value
     updateSettings.mutate(
       { [key]: defaultVal },
@@ -193,51 +190,47 @@ export function SettingsPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           <SettingRow
-            label="Transcribe Media"
-            description="Use Google Gemini to transcribe voice notes and describe images. Transcripts appear when pulling messages and are searchable."
-            isOverridden={isOverridden("transcribeMedia")}
-            onReset={() => handleReset("transcribeMedia")}
+            label="Audio Transcription"
+            description="Run CrisperWhisper 2.0 locally on the CPU. The selected model downloads on first use; transcripts are stored and searchable."
+            isOverridden={isOverridden("transcriptionMode")}
+            onReset={() => handleReset("transcriptionMode")}
           >
-            <Switch checked={transcribeMedia} onCheckedChange={setTranscribeMedia} />
+            <Select value={transcriptionMode} onValueChange={setTranscriptionMode}>
+              <SelectTrigger className="w-36">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {TRANSCRIPTION_MODES.map((mode) => (
+                  <SelectItem key={mode.value} value={mode.value}>
+                    {mode.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </SettingRow>
 
           <div className="h-px bg-border" />
 
           <SettingRow
-            label="Gemini API Key"
-            description={
-              geminiKeySet
-                ? "A key is configured. Enter a new key to replace it, or reset to clear."
-                : "Get a key at aistudio.google.com/apikey. Stored encrypted at rest when ENCRYPTION_KEY is set."
-            }
-            isOverridden={isOverridden("geminiApiKey")}
-            onReset={() => handleReset("geminiApiKey")}
-          >
-            <Input
-              type="password"
-              autoComplete="off"
-              value={geminiApiKey}
-              placeholder={geminiKeySet ? "•••••••••• (saved)" : "Paste API key"}
-              onChange={(e) => setGeminiApiKey(e.target.value)}
-              className="w-56 h-9"
-            />
-          </SettingRow>
-
-          <div className="h-px bg-border" />
-
-          <SettingRow
-            label="Gemini Model"
-            description="The Gemini model used for transcription and image description."
-            isOverridden={isOverridden("geminiModel")}
-            onReset={() => handleReset("geminiModel")}
+            label="Speech Language"
+            description="Two-letter ISO 639-1 code, such as en, pt, es, or de. CrisperWhisper requires an explicit language."
+            isOverridden={isOverridden("transcriptionLanguage")}
+            onReset={() => handleReset("transcriptionLanguage")}
           >
             <Input
               type="text"
-              value={geminiModel}
-              onChange={(e) => setGeminiModel(e.target.value)}
-              className="w-56 h-9"
+              maxLength={2}
+              value={transcriptionLanguage}
+              onChange={(e) => setTranscriptionLanguage(e.target.value)}
+              className="w-20 h-9 uppercase"
+              disabled={transcriptionMode === "off"}
             />
           </SettingRow>
+
+          <p className="text-xs text-muted-foreground">
+            Best uses the large model, Medium uses medium, and Fast uses turbo. Nyra Labs&apos;
+            standard model weights require a separate license for commercial use.
+          </p>
         </CardContent>
       </Card>
 

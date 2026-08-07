@@ -4,7 +4,9 @@ import { mediaRepo } from '../database/repositories/media.js';
 import { config } from '../config.js';
 import { getSettings } from '../settings.js';
 import { log } from '../utils/logger.js';
-import { transcribeMedia, transcriptionKindFor } from './transcribe.js';
+import { eventBus } from '../events/bus.js';
+import { normalizeJid } from '../utils/jid.js';
+import { isAudioMimeType, transcribeAudio } from './transcribe.js';
 import type { MediaMessageFields } from '../events/types.js';
 import fs from 'fs';
 import path from 'path';
@@ -168,22 +170,19 @@ class MediaManager {
 
     log.media.info({ path: relativePath, sizeKB: Math.round(buffer.length / 1024) }, 'Downloaded media');
 
-    // Transcribe/describe via Gemini if enabled. Runs inline in the serial queue
-    // and is fully error-contained so it never triggers a download retry.
-    await this.maybeTranscribe(mediaId, msg, buffer, mimeType);
+    // Transcribe audio locally if enabled. Runs inline in the serial queue and
+    // is fully error-contained so it never triggers a download retry.
+    await this.maybeTranscribe(mediaId, msg, fullPath, mimeType);
   }
 
   /**
-   * Transcribe audio / describe images with Gemini and store the result on the
-   * message. No-op unless transcription is enabled, a key is set, and the media
-   * type is eligible. Never throws.
+   * Transcribe audio with the configured CPU-only CrisperWhisper model and store
+   * the result on the message. No-op when disabled or for non-audio media.
+   * Never throws.
    */
-  private async maybeTranscribe(mediaId: string, msg: WAMessage, buffer: Buffer, mimeType: string): Promise<void> {
+  private async maybeTranscribe(mediaId: string, msg: WAMessage, audioPath: string, mimeType: string): Promise<void> {
     const settings = getSettings();
-    if (!settings.transcribeMedia || !settings.geminiApiKey) return;
-
-    const kind = transcriptionKindFor(mimeType);
-    if (!kind) return;
+    if (settings.transcriptionMode === 'off' || !isAudioMimeType(mimeType)) return;
 
     const messageId = msg.key?.id;
     if (!messageId) return;
@@ -191,13 +190,39 @@ class MediaManager {
     const { messagesRepo } = await import('../database/repositories/messages.js');
     try {
       messagesRepo.setTranscriptionStatus(messageId, 'pending');
-      const text = await transcribeMedia({ buffer, mimeType, kind });
+      this.publishTranscriptionUpdate(msg, messageId, 'pending');
+      const text = await transcribeAudio({
+        audioPath,
+        mode: settings.transcriptionMode,
+        language: settings.transcriptionLanguage,
+      });
       messagesRepo.setTranscription(messageId, text || null, 'done');
-      log.media.info({ mediaId, kind, chars: text.length }, 'Transcribed media');
+      this.publishTranscriptionUpdate(msg, messageId, 'done', text || null);
+      log.media.info(
+        { mediaId, mode: settings.transcriptionMode, chars: text.length },
+        'Transcribed audio locally'
+      );
     } catch (err) {
       messagesRepo.setTranscriptionStatus(messageId, 'failed');
-      log.media.warn({ err: String(err), mediaId, kind }, 'Media transcription failed');
+      this.publishTranscriptionUpdate(msg, messageId, 'failed');
+      log.media.warn({ err: String(err), mediaId }, 'Local audio transcription failed');
     }
+  }
+
+  private publishTranscriptionUpdate(
+    msg: WAMessage,
+    messageId: string,
+    status: 'pending' | 'done' | 'failed',
+    transcription: string | null = null
+  ): void {
+    const remoteJid = msg.key?.remoteJid;
+    if (!remoteJid) return;
+    eventBus.publish('message.transcription', {
+      chat_jid: normalizeJid(remoteJid, msg.key.remoteJidAlt),
+      message_id: messageId,
+      transcription_status: status,
+      transcription,
+    });
   }
 
   /** Manually retry downloading a failed media item by reconstructing from the stored raw_message. */
