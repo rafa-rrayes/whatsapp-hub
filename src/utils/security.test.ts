@@ -234,4 +234,39 @@ describe('validateUrlForFetch', () => {
   it('rejects link-local/metadata addresses', async () => {
     await expect(validateUrlForFetch('http://169.254.169.254/latest/meta-data')).rejects.toThrow('private');
   });
+
+  it('accepts public IPv4 addresses', async () => {
+    await expect(validateUrlForFetch('https://104.21.54.220/hook')).resolves.toBeUndefined();
+    await expect(validateUrlForFetch('https://172.67.142.176/hook')).resolves.toBeUndefined();
+  });
+
+  // A CDN-fronted callback host answers on IPv6 as well as IPv4, and every
+  // address a hostname resolves to has to pass. Treating global unicast as
+  // private rejected every such host outright.
+  it('accepts global unicast IPv6 addresses', async () => {
+    await expect(validateUrlForFetch('https://[2606:4700:3030::6815:36dc]/hook')).resolves.toBeUndefined();
+    await expect(validateUrlForFetch('https://[2001:4860:4860::8888]/hook')).resolves.toBeUndefined();
+    await expect(validateUrlForFetch('https://[2a00:1450:4001:80f::200e]/hook')).resolves.toBeUndefined();
+  });
+
+  it('rejects private IPv6 addresses', async () => {
+    await expect(validateUrlForFetch('http://[::1]/hook')).rejects.toThrow('private');
+    await expect(validateUrlForFetch('http://[fd00::1]/hook')).rejects.toThrow('private');
+    await expect(validateUrlForFetch('http://[fc00::1]/hook')).rejects.toThrow('private');
+    await expect(validateUrlForFetch('http://[fe80::1]/hook')).rejects.toThrow('private');
+    await expect(validateUrlForFetch('http://[febf::1]/hook')).rejects.toThrow('private');
+    await expect(validateUrlForFetch('http://[ff02::1]/hook')).rejects.toThrow('private');
+  });
+
+  it('rejects IPv6 ranges that tunnel or embed another address', async () => {
+    await expect(validateUrlForFetch('http://[2002:7f00:1::1]/hook')).rejects.toThrow('private');   // 6to4 -> 127.0.0.1
+    await expect(validateUrlForFetch('http://[2001:0:5ef5:79fd::1]/hook')).rejects.toThrow('private'); // Teredo
+    await expect(validateUrlForFetch('http://[2001:db8::1]/hook')).rejects.toThrow('private');      // documentation
+    await expect(validateUrlForFetch('http://[64:ff9b::7f00:1]/hook')).rejects.toThrow('private');  // NAT64 -> 127.0.0.1
+  });
+
+  it('rejects IPv4-mapped IPv6 pointing at a private address', async () => {
+    await expect(validateUrlForFetch('http://[::ffff:127.0.0.1]/hook')).rejects.toThrow('private');
+    await expect(validateUrlForFetch('http://[::ffff:169.254.169.254]/hook')).rejects.toThrow('private');
+  });
 });

@@ -37,19 +37,7 @@ function ipToLong(ip: string): number {
   return ((parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]) >>> 0;
 }
 
-function isPrivateIP(ip: string): boolean {
-  // Handle IPv6 loopback
-  if (ip === '::1' || ip === '::' || ip.startsWith('fc') || ip.startsWith('fd') || ip.startsWith('fe80')) {
-    return true;
-  }
-
-  // Handle IPv4-mapped IPv6
-  if (ip.startsWith('::ffff:')) {
-    ip = ip.slice(7);
-  }
-
-  if (!net.isIPv4(ip)) return true; // Block unknown formats
-
+function isPrivateIPv4(ip: string): boolean {
   const ipLong = ipToLong(ip);
   for (const range of BLOCKED_IP_RANGES) {
     if (ipLong >= ipToLong(range.start) && ipLong <= ipToLong(range.end)) {
@@ -57,6 +45,53 @@ function isPrivateIP(ip: string): boolean {
     }
   }
   return false;
+}
+
+/**
+ * The first two hextets of an IPv6 address. '::' stands for a run of zeros,
+ * so whatever it swallows reads as 0 — which is all the checks below need.
+ */
+function leadingHextets(addr: string): [number, number] {
+  const parts = addr.split('::')[0].split(':').filter(Boolean);
+  return [
+    parts.length > 0 ? parseInt(parts[0], 16) : 0,
+    parts.length > 1 ? parseInt(parts[1], 16) : 0,
+  ];
+}
+
+/**
+ * True only for global unicast (2000::/3), minus the ranges that look global
+ * but tunnel or embed an arbitrary address. Everything else — loopback,
+ * unique-local, link-local, multicast, NAT64 — sits outside 2000::/3 and is
+ * rejected by the range test alone.
+ */
+function isGlobalUnicastIPv6(addr: string): boolean {
+  const [h0, h1] = leadingHextets(addr);
+  if (Number.isNaN(h0) || Number.isNaN(h1)) return false;
+
+  if (h0 < 0x2000 || h0 > 0x3fff) return false;
+  if (h0 === 0x2002) return false;                   // 2002::/16     6to4
+  if (h0 === 0x2001 && h1 === 0x0000) return false;  // 2001::/32     Teredo
+  if (h0 === 0x2001 && h1 === 0x0db8) return false;  // 2001:db8::/32 documentation
+  return true;
+}
+
+function isPrivateIP(ip: string): boolean {
+  const addr = ip.split('%')[0].toLowerCase(); // drop any IPv6 zone id
+
+  if (net.isIPv4(addr)) return isPrivateIPv4(addr);
+  if (!net.isIPv6(addr)) return true; // Block unknown formats
+
+  // IPv4-mapped (::ffff:1.2.3.4): judge the embedded IPv4, since that is the
+  // address traffic actually reaches. Node re-serializes these in hex
+  // (::ffff:7f00:1), a form that no longer parses as IPv4 — it falls through
+  // to the global-unicast test below and is rejected, the safe direction.
+  if (addr.startsWith('::ffff:')) {
+    const embedded = addr.slice(7);
+    if (net.isIPv4(embedded)) return isPrivateIPv4(embedded);
+  }
+
+  return !isGlobalUnicastIPv6(addr);
 }
 
 /**
@@ -82,7 +117,10 @@ export async function validateUrlForFetch(urlString: string): Promise<void> {
     throw new Error('URLs with credentials are not allowed');
   }
 
-  const hostname = parsed.hostname;
+  // WHATWG serializes an IPv6 host with its brackets ('[::1]'), which no IP
+  // parser accepts — without stripping them a literal address is mistaken for
+  // a hostname and sent to DNS.
+  const hostname = parsed.hostname.replace(/^\[|\]$/g, '');
 
   // If hostname is already an IP, check it directly
   if (net.isIP(hostname)) {
