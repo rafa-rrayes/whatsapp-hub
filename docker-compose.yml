@@ -37,7 +37,11 @@ services:
       - SECURITY_HASH_EVENT_JIDS=${SECURITY_HASH_EVENT_JIDS:-false}
       - SECURITY_SEC_FETCH_CHECK=${SECURITY_SEC_FETCH_CHECK:-false}
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3100/health"]
+      # 127.0.0.1, never `localhost`: the container's /etc/hosts maps localhost
+      # to both 127.0.0.1 and ::1, musl prefers the IPv6 answer, and Node listens
+      # on 0.0.0.0 only — so `localhost` is refused and this check can never pass.
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3100/health"]
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 20s

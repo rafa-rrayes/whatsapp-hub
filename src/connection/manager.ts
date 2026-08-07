@@ -127,6 +127,16 @@ class ConnectionManager {
         if (qr) {
           this.qrCode = qr;
           this.status = 'qr';
+          // Reaching a QR proves the socket talked to WhatsApp successfully, so
+          // the retry budget has done its job — same reasoning as the reset on
+          // `connection === 'open'` below. Without this, an unscanned QR is
+          // fatal: Baileys rotates ~6 refs, gives up with "QR refs attempts
+          // ended", and that counts as a failed attempt. Ten of those and the
+          // socket is dead for good, so a pairing screen nobody scans within
+          // ~35 minutes can never show a QR again until someone restarts the
+          // container. Genuine unreachability still exhausts the budget,
+          // because a socket that never reaches WhatsApp never emits a QR.
+          this.retryCount = 0;
           eventBus.publish('connection.qr', { qr });
           eventBus.publish('connection.status', { status: this.status });
           log.wa.info('QR code generated — scan with WhatsApp');
@@ -153,8 +163,17 @@ class ConnectionManager {
             log.wa.warn('Logged out. Delete auth folder and restart to re-authenticate.');
             eventBus.publish('connection.logged_out', {});
           } else {
-            log.wa.error('Max reconnection attempts reached');
+            log.wa.error('Max reconnection attempts reached — exiting for the supervisor to restart');
             eventBus.publish('connection.failed', { retries: this.retryCount });
+            // Idling here is worse than dying. The process stays up serving a
+            // healthy REST API while the WhatsApp socket is permanently dead,
+            // so nothing external can tell the difference: `/health` never
+            // consults this manager, and Docker does not restart a container
+            // for being unhealthy anyway. Exiting non-zero hands the problem to
+            // the restart policy, which is the only thing here that can
+            // actually recover it. The delay lets the log line and the
+            // connection.failed event flush to subscribers first.
+            setTimeout(() => process.exit(1), 1000);
           }
         }
 
