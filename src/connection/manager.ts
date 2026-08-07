@@ -160,8 +160,26 @@ class ConnectionManager {
             this.clearReconnectTimer();
             this.reconnectTimer = setTimeout(() => this.connect(), delay);
           } else if (!shouldReconnect) {
-            log.wa.warn('Logged out. Delete auth folder and restart to re-authenticate.');
             eventBus.publish('connection.logged_out', {});
+
+            // WhatsApp revoked this device — unlinked from the phone, or logged
+            // out elsewhere. The credentials on disk can never authenticate
+            // again, and presenting them just fails, so the socket sits in
+            // 'connecting' forever and never emits a QR: a QR is only offered
+            // when there is no auth state to present. Printing "delete the auth
+            // folder" and leaving it there strands the hub in the one state a
+            // pairing screen cannot escape, since restarting re-presents the
+            // same dead credentials.
+            //
+            // Only clear when there is something to clear, so a logged-out
+            // close with no auth state on disk can't loop here.
+            if (fs.existsSync(config.authDir)) {
+              log.wa.warn('Logged out — clearing the revoked auth state so a fresh QR can be scanned.');
+              this.clearReconnectTimer();
+              this.reconnectTimer = setTimeout(() => void this.newQR(), 1000);
+            } else {
+              log.wa.warn('Logged out with no auth state to clear.');
+            }
           } else {
             log.wa.error('Max reconnection attempts reached — exiting for the supervisor to restart');
             eventBus.publish('connection.failed', { retries: this.retryCount });
