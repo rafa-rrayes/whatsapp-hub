@@ -381,10 +381,32 @@ class ConnectionManager {
     });
   }
 
-  async markRead(jid: string, messageIds: string[]): Promise<void> {
+  /**
+   * Send read receipts (blue ticks) for messages in a chat.
+   *
+   * Accepts bare IDs — enough for a DM — or `{ id, participant }` entries.
+   * The participant is load-bearing for groups: Baileys buckets keys by
+   * `remoteJid:participant` and forwards it as the `participant` attribute of
+   * the `receipt` node (Socket/messages-send). A group receipt without it is
+   * not attributed to the message's sender and is not honoured, so callers
+   * that have the message stored should pass `MessageRow.participant` with it.
+   */
+  async markRead(
+    jid: string,
+    messages: Array<string | { id: string; participant?: string }>,
+  ): Promise<void> {
     const sock = this.requireSocket();
     await sock.readMessages(
-      messageIds.map((id) => ({ remoteJid: jid, id }) as WAMessageKey)
+      messages.map((m) => {
+        const entry = typeof m === 'string' ? { id: m, participant: undefined } : m;
+        return {
+          remoteJid: jid,
+          id: entry.id,
+          participant: entry.participant || undefined,
+          // Baileys drops keys flagged fromMe; ours are always received messages.
+          fromMe: false,
+        } as WAMessageKey;
+      })
     );
   }
 

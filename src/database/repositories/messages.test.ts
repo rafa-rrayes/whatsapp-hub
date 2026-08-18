@@ -113,6 +113,50 @@ describe('messagesRepo', () => {
       expect(result.total).toBe(3);
     });
 
+    it('filters by a single message_types entry', () => {
+      const result = messagesRepo.query({ message_types: ['image'] });
+      expect(result.total).toBe(3);
+      expect(result.data.every((m) => m.message_type === 'image')).toBe(true);
+    });
+
+    it('filters by several message_types at once', () => {
+      const result = messagesRepo.query({ message_types: ['text', 'image'] });
+      expect(result.total).toBe(10);
+      expect(result.data.every((m) => m.message_type === 'text' || m.message_type === 'image')).toBe(true);
+    });
+
+    it('counts only the matching types, not every row the other filters left', () => {
+      // The count and the page have to agree: `total` is rendered to a model as
+      // "N more matches" next to the call that is supposed to fetch them.
+      const result = messagesRepo.query({ message_types: ['image'], limit: 1 });
+      expect(result.data.length).toBe(1);
+      expect(result.total).toBe(3);
+    });
+
+    it('treats an empty message_types as no type filter at all', () => {
+      const result = messagesRepo.query({ message_types: [] });
+      expect(result.total).toBe(10);
+    });
+
+    it('returns nothing for a type no message has', () => {
+      const result = messagesRepo.query({ message_types: ['sticker'] });
+      expect(result.total).toBe(0);
+      expect(result.data).toEqual([]);
+    });
+
+    it('composes message_types with the other filters', () => {
+      const result = messagesRepo.query({
+        message_types: ['text', 'image'],
+        remote_jid: '222@s.whatsapp.net',
+      });
+      expect(result.total).toBe(5);
+    });
+
+    it('binds the types as parameters rather than splicing them into the SQL', () => {
+      const result = messagesRepo.query({ message_types: ["text') OR 1=1 --"] });
+      expect(result.total).toBe(0);
+    });
+
     it('filters by text search', () => {
       const result = messagesRepo.query({ search: 'message 3' });
       expect(result.total).toBe(1);

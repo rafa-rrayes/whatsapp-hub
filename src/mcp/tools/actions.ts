@@ -3,6 +3,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { McpTool } from '../types.js';
 import { jsonResult, errorResult } from '../types.js';
 import { isJid } from '../resolve.js';
+import { maskJid } from '../prose.js';
 import { connectionManager } from '../../connection/manager.js';
 import { messagesRepo } from '../../database/repositories/messages.js';
 import { chatsRepo } from '../../database/repositories/chats.js';
@@ -20,6 +21,8 @@ import { config } from '../../config.js';
  *     so MCP clients can prompt the user before invoking.
  *   - `send_message` is NOT idempotent (sending twice sends twice).
  *     `react_to_message` IS idempotent (re-applying the same reaction is a no-op).
+ *     `mark_read` IS idempotent but destructive: it drops the unread marker and
+ *     shows the other side blue ticks, neither of which can be taken back.
  */
 
 /**
@@ -337,6 +340,195 @@ const reactToMessageTool: McpTool = {
 };
 
 /**
+ * Ceiling on how many read receipts one `mark_read` call will send.
+ *
+ * `unread_count` is WhatsApp's number, mirrored into our DB — it can be stale,
+ * or four digits after a history sync, and nothing validates it. Receipts also
+ * only need the newest messages to be meaningful (the blue tick the other side
+ * sees is driven by the tail of the conversation), so acknowledging the whole
+ * backlog buys nothing while letting one tool call fan out unboundedly.
+ * 50 matches the default page size used elsewhere in the MCP read paths.
+ */
+const MAX_READ_RECEIPTS = 50;
+
+const markReadTool: McpTool = {
+  register(server: McpServer) {
+    server.registerTool(
+      'mark_read',
+      {
+        title: 'Mark a WhatsApp chat as read',
+        description:
+          'Clear a chat\'s unread state by sending WhatsApp read receipts. ' +
+          'THE OTHER PEOPLE IN THE CHAT WILL SEE BLUE TICKS: this is visible to ' +
+          'real humans, it tells them their message was read just now, and it ' +
+          'cannot be undone. Only call it once the messages have actually been ' +
+          'read. Omit `message_ids` to acknowledge the chat\'s unread received ' +
+          `messages (newest first, at most ${MAX_READ_RECEIPTS}) and reset the ` +
+          "chat's local unread counter to 0 once WhatsApp accepts the receipts, " +
+          'or pass specific IDs to acknowledge only those and leave the counter ' +
+          'alone. A chat with nothing unread sends nothing and says so. ' +
+          'Works for groups: the receipt carries the original sender, taken ' +
+          'from the locally stored copy of the message.',
+        inputSchema: {
+          jid: z
+            .string()
+            .describe(
+              'JID of the chat to mark read (e.g. "5511999999999@s.whatsapp.net" ' +
+              'or "...@g.us"). Use `resolve_contact` to look up the JID for a name.',
+            ),
+          message_ids: z
+            .array(z.string().min(1))
+            .min(1)
+            .max(MAX_READ_RECEIPTS)
+            .optional()
+            .describe(
+              'Specific message IDs to acknowledge. Omit this to acknowledge ' +
+              "the chat's unread received messages automatically (newest first), " +
+              'which is what you want for ordinary inbox triage.',
+            ),
+        },
+        annotations: {
+          readOnlyHint: false,
+          // Re-running the same call leaves the same state: the chat is read,
+          // and WhatsApp shows one blue tick per message however many receipts
+          // arrive for it.
+          idempotentHint: true,
+          openWorldHint: true,
+          // Not additive: it removes the unread marker — the whole triage
+          // signal — and neither that nor the receipt the other side saw can be
+          // taken back. Clients should treat it as needing confirmation.
+          destructiveHint: true,
+        },
+      },
+      async ({ jid, message_ids }) => {
+        if (!isJid(jid)) {
+          return errorResult(
+            'Invalid JID format. Use `resolve_contact` to look up the JID for a name.',
+          );
+        }
+
+        try {
+          const chat = chatsRepo.getByJid(jid);
+
+          // Targets carry `participant` so group receipts are attributed to the
+          // message's original sender; a group receipt without it is dropped.
+          let targets: Array<{ id: string; participant?: string }>;
+          let capped = false;
+
+          if (message_ids && message_ids.length > 0) {
+            targets = [];
+            for (const id of message_ids) {
+              const row = messagesRepo.getById(id);
+              // Unknown IDs still go out (we may simply not have stored them),
+              // but anything we DO know about gets checked — sending a receipt
+              // into the wrong chat is the same class of mistake as sending a
+              // message to the wrong Maria.
+              if (row && row.remote_jid !== jid) {
+                // Named, never JID'd. The caller asked about *this* chat; an
+                // error message is no place to hand it the raw identifier of a
+                // different one it never had.
+                const other = chatsRepo.getByJid(row.remote_jid);
+                return errorResult(
+                  `Message ${id} belongs to a different chat ` +
+                  `(${other?.name?.trim() || maskJid(row.remote_jid)}). ` +
+                  'Send read receipts to the chat the message is in.',
+                );
+              }
+              if (row?.from_me) {
+                return errorResult(
+                  `Message ${id} was sent by you — read receipts only apply to ` +
+                  'messages you received.',
+                );
+              }
+              targets.push({ id, participant: row?.participant });
+            }
+          } else {
+            if (!chat) {
+              return errorResult(
+                'No chat with that JID in the local mirror. Use `list_chats` or ' +
+                '`resolve_contact` to find the right JID, or pass `message_ids` ' +
+                'explicitly.',
+              );
+            }
+            const unread = chat.unread_count ?? 0;
+            if (unread <= 0) {
+              // Nothing to do is not a failure — and it must not cost a
+              // pointless network round trip or a bogus blue tick.
+              return jsonResult({
+                ok: true,
+                jid,
+                marked: 0,
+                unread_before: 0,
+                message_ids: [],
+                note: 'Chat had nothing unread; no read receipts were sent.',
+              });
+            }
+            capped = unread > MAX_READ_RECEIPTS;
+            const { data } = messagesRepo.query({
+              remote_jid: jid,
+              from_me: false,
+              order: 'desc',
+              limit: Math.min(unread, MAX_READ_RECEIPTS),
+            });
+            if (data.length === 0) {
+              return errorResult(
+                `Chat reports ${unread} unread but no received messages are stored ` +
+                'locally, so there is nothing to acknowledge. Run `sync_history` ' +
+                'for this chat first.',
+              );
+            }
+            targets = data.map((m) => ({ id: m.id, participant: m.participant }));
+          }
+
+          await connectionManager.markRead(jid, targets);
+
+          // The counter is only cleared on the automatic path, which is the one
+          // that just acknowledged the chat's unread tail. A caller naming
+          // specific IDs may well have acknowledged one old message out of
+          // twelve, and zeroing the chat there would leave the inbox claiming
+          // nothing is waiting when eleven messages are. The asymmetry is
+          // deliberate: a stale unread count gets the chat triaged twice, a
+          // false zero drops it silently. Only after WhatsApp accepted the
+          // receipts — clearing first would claim a chat is read when the other
+          // side never saw a blue tick.
+          const cleared = !message_ids || message_ids.length === 0;
+          if (cleared) chatsRepo.clearUnread(jid);
+
+          const notes: string[] = [];
+          if (capped) {
+            notes.push(
+              `Chat reported ${chat?.unread_count} unread; receipts were sent for ` +
+              `the newest ${targets.length}.`,
+            );
+          }
+          notes.push(
+            cleared
+              ? 'The local unread counter for this chat is now 0.'
+              : 'The local unread counter was left alone: you named specific ' +
+                'messages, so the chat may still hold unread ones. Call without ' +
+                '`message_ids` to clear it.',
+          );
+
+          return jsonResult({
+            ok: true,
+            jid,
+            marked: targets.length,
+            message_ids: targets.map((t) => t.id),
+            unread_before: chat?.unread_count ?? null,
+            unread_cleared: cleared,
+            capped,
+            note: notes.join(' '),
+          });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          return errorResult(`mark_read failed: ${message}`);
+        }
+      },
+    );
+  },
+};
+
+/**
  * Request older chat history from WhatsApp, anchored on the oldest message we
  * already have stored (Baileys walks backwards from that cursor). Mirrors the
  * REST `syncOneChat` helper in src/api/routes/chats.ts so the two surfaces stay
@@ -452,4 +644,9 @@ const syncHistoryTool: McpTool = {
   },
 };
 
-export const actionTools: McpTool[] = [sendMessageTool, reactToMessageTool, syncHistoryTool];
+export const actionTools: McpTool[] = [
+  sendMessageTool,
+  reactToMessageTool,
+  markReadTool,
+  syncHistoryTool,
+];

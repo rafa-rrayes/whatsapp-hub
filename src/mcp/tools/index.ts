@@ -1,12 +1,14 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { McpTool } from '../types.js';
 import { orientationTools } from './orientation.js';
+import { inboxTools } from './inbox.js';
 import { searchTools } from './search.js';
 import { aggregationTools } from './aggregation.js';
 import { actionTools } from './actions.js';
 
 const ALL_TOOLS: McpTool[] = [
   ...orientationTools,
+  ...inboxTools,
   ...searchTools,
   ...aggregationTools,
   ...actionTools,

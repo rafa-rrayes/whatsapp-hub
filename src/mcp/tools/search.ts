@@ -1,9 +1,10 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { McpTool } from '../types.js';
-import { jsonResult, textResult, errorResult } from '../types.js';
+import { jsonResult, textResult, errorResult, proseResult } from '../types.js';
 import { resolveOne, isJid } from '../resolve.js';
 import { renderConversation } from '../render.js';
+import { formatStamp, truncateBody, maskJid, continuation } from '../prose.js';
 import { messagesRepo, type MessageRow } from '../../database/repositories/messages.js';
 import { chatsRepo, type ChatRow } from '../../database/repositories/chats.js';
 import { contactsRepo } from '../../database/repositories/contacts.js';
@@ -178,6 +179,212 @@ function resolveOrError(query: string, what: string, dmsOnly = false):
 }
 
 // ---------------------------------------------------------------------------
+// Rendering search hits as prose (see src/mcp/prose.ts for the dialect)
+// ---------------------------------------------------------------------------
+
+/**
+ * How much of a hit's body reaches the model. Deliberately the same cap
+ * `buildSnippet` applies, so the prose and the `structuredContent` snippet are
+ * the same text rather than two different truncations of it. A hit is the
+ * answer to the question, not a preview of one, which is why it gets twice the
+ * `PREVIEW_CHARS` an inbox line is allowed.
+ */
+const HIT_CHARS = 160;
+
+/**
+ * Default character ceiling on a rendered transcript.
+ *
+ * `get_conversation` defaulted to `last_n: 50` and no cap at all, so fifty
+ * messages in a chat where people paste logs could return a wall that pushes
+ * everything else out of a model's context — and the caller had no way to know
+ * it was coming. PFC's number, and it holds up: roughly a screenful of real
+ * conversation, raisable per call when a caller genuinely wants more.
+ */
+const TRANSCRIPT_BUDGET = 6000;
+
+/** A JID anywhere inside text, as opposed to one we were handed as a field. */
+const JID_IN_TEXT = /[\w.-]+@(?:s\.whatsapp\.net|g\.us|lid|c\.us|broadcast)/g;
+
+/** The same shape, anchored — "is this whole string a JID?" */
+const JID_SHAPE = /^[\w.-]+@(?:s\.whatsapp\.net|g\.us|lid|c\.us|broadcast)$/;
+
+/**
+ * The dialect's first rule, applied to text that came out of the database.
+ *
+ * The rule exists to stop *the archive* handing a model identifiers it never
+ * had, so the boundary it guards is the one every stored string crosses: a
+ * message body quoting a number, a chat named after one. Field-level masking
+ * cannot see those — a JID inside a body is not a field, it is prose.
+ *
+ * What deliberately does *not* pass through here is the caller's own `query`.
+ * It typed that string; echoing it back leaks nothing it did not already have,
+ * and masking it would break the very thing the continuation rule exists to
+ * guarantee — a model handed `search_messages(query="…9999 (DM)")` runs it and
+ * gets nothing back. Scrub what we fetched; echo what we were told.
+ */
+function scrubJids(text: string): string {
+  return text.replace(JID_IN_TEXT, (jid) => maskJid(jid));
+}
+
+/**
+ * A name we can show, or a masked stand-in when the "name" we were handed is
+ * really a JID.
+ *
+ * `chatNameFor` and `senderNameFor` both fall back to returning the JID when
+ * nothing resolves, and that fallback is exactly the string that must not reach
+ * the model. Callers of this function get four digits and a kind instead —
+ * enough to tell two unnamed chats apart, not enough to dial. A name that
+ * merely *contains* a JID is scrubbed rather than replaced: the rest of it is
+ * still the best label we have.
+ */
+function safeLabel(name: string | undefined, jid: string | undefined): string {
+  if (name && !JID_SHAPE.test(name)) return scrubJids(name);
+  const fallback = jid ?? name;
+  return fallback ? maskJid(fallback) : 'unknown';
+}
+
+/** One row of `search_messages`'s `results` — the shape the tool already builds. */
+interface SearchHit {
+  message_id: string;
+  chat_name: string;
+  chat_jid: string;
+  sender_name: string;
+  sender_jid: string | null;
+  timestamp: number;
+  is_from_me: boolean;
+  snippet: string;
+  has_media: boolean;
+  message_type: string;
+}
+
+interface HitGroup {
+  label: string;
+  is_group: boolean;
+  /** False when `label` is a masked JID — such a chat cannot be named back to us. */
+  named: boolean;
+  hits: SearchHit[];
+}
+
+interface RenderHitsOptions {
+  /** Echoed verbatim so the model can see what it actually asked for. */
+  query: string;
+  /** `result.total` — every row matching the filters, not just the returned page. */
+  total: number;
+  /** IANA zone for the stamps. Invalid zones fall back to UTC inside `formatStamp`. */
+  timezone: string;
+  /** Resolved name of the `chat` filter, when one was given. */
+  chat_label?: string;
+  /** The other narrowing clauses, already worded: `from Ana`, `after 06-01 09:00`. */
+  filters: string[];
+  /** The literal call that returns the matches this page left behind. */
+  more_call?: string;
+}
+
+/** `[06-15 12:00] Ana: o boleto chegou hoje  `3EB0C767`` */
+function renderHitLine(hit: SearchHit, timezone: string, indent: boolean): string {
+  const sender = hit.is_from_me ? 'Me' : safeLabel(hit.sender_name, hit.sender_jid ?? undefined);
+  const body = scrubJids(truncateBody(hit.snippet, HIT_CHARS));
+  // The id is the only thing on the line a model can pass back to us, and
+  // `get_conversation(around_message_id=…)` is this tool's documented next
+  // step — a hit without one is a dead end. It trails the line, in backticks,
+  // the way `renderConversation(include_id: true)` already writes ids.
+  return `${indent ? '  ' : ''}[${formatStamp(hit.timestamp, timezone)}] ${sender}: ${body}  \`${hit.message_id}\``;
+}
+
+/**
+ * Matches as a chat log, grouped by chat, newest first.
+ *
+ * Twenty hits scattered over four chats read as four short transcripts far
+ * better than as a flat list that renames its chat every other line, so hits
+ * are collected per chat and each chat appears once. Order is still recency:
+ * the groups come in the order their newest hit did, and hits inside a group
+ * stay newest-first. When every hit is in one chat the chat is named in the
+ * header instead and the group heading is dropped — one line saved on the
+ * single most common search there is.
+ *
+ * Nothing here queries the database: `hits` is what the tool already loaded.
+ */
+function renderSearchHits(hits: SearchHit[], o: RenderHitsOptions): string {
+  const groups = new Map<string, HitGroup>();
+  for (const hit of hits) {
+    let group = groups.get(hit.chat_jid);
+    if (!group) {
+      const named = Boolean(hit.chat_name) && !JID_SHAPE.test(hit.chat_name);
+      group = {
+        label: safeLabel(hit.chat_name, hit.chat_jid),
+        is_group: hit.chat_jid.endsWith('@g.us'),
+        named,
+        hits: [],
+      };
+      groups.set(hit.chat_jid, group);
+    }
+    group.hits.push(hit);
+  }
+  const list = [...groups.values()];
+
+  // A chat filter names the chat even when it matched nothing; a single group
+  // names itself. Both end up in the same "in X" clause.
+  const only = o.chat_label ?? (list.length === 1 ? list[0].label : undefined);
+  const scope = [...(only ? [`in ${only}`] : []), ...o.filters].join(' ');
+  const where = scope ? ` ${scope}` : '';
+
+  if (hits.length === 0) {
+    return [
+      `Nothing${where} matches "${o.query}".`,
+      'Try fewer words or a different spelling, or list_chats() to see what has history.',
+    ].join('\n');
+  }
+
+  const count = hits.length === 1 ? '1 match' : `${hits.length} matches`;
+  const spread = list.length > 1 ? ` across ${list.length} chats` : '';
+  const order = hits.length === 1 ? '' : ', newest first';
+  const lines: string[] = [`${count} for "${o.query}"${where}${spread}${order}:`, ''];
+
+  const grouped = list.length > 1;
+  for (const group of list) {
+    if (grouped) lines.push(group.is_group ? `${group.label} · group` : group.label);
+    for (const hit of group.hits) lines.push(renderHitLine(hit, o.timezone, grouped));
+    lines.push('');
+  }
+
+  const more = Math.max(o.total - hits.length, 0);
+  if (more > 0) {
+    const matches = more === 1 ? 'match' : 'matches';
+    lines.push(
+      o.more_call
+        ? `… ${more} more ${matches} · ${o.more_call}`
+        : `… ${more} more ${matches} — narrow by chat, sender or time range to reach them.`,
+    );
+  }
+
+  // A masked chat cannot be passed back as a `chat` argument, so the example
+  // borrows the first chat we do have a name for and falls back to a placeholder.
+  const readable = list.find((g) => g.named)?.label ?? '…';
+  lines.push(
+    `Read any of these in context with ` +
+      `${continuation('get_conversation', { chat: readable, around_message_id: '…' })}` +
+      ` — the id is the last thing on each hit line.`,
+  );
+
+  // No blanket pass over the finished text: every label and body above is
+  // already scrubbed at the point it came out of the database, and the header
+  // and the continuation echo the caller's query as it typed it.
+  return lines.join('\n');
+}
+
+/**
+ * Splices a `types` filter into a rendered continuation call.
+ *
+ * `continuation()` has no vocabulary for array arguments, and silently dropping
+ * a filter from a call we are *telling* a model to make would hand it back a
+ * different search than the one it ran.
+ */
+function withTypes(call: string, types?: string[]): string {
+  if (!types || types.length === 0 || call.endsWith('()')) return call;
+  return `${call.slice(0, -1)}, types=[${types.map((t) => JSON.stringify(t)).join(', ')}])`;
+}
+
+// ---------------------------------------------------------------------------
 // 1. search_messages
 // ---------------------------------------------------------------------------
 
@@ -188,10 +395,11 @@ const searchMessagesTool: McpTool = {
       {
         title: 'Search messages',
         description:
-          'Full-text search across the message archive. Returns snippets (not full bodies) ' +
-          'so you can scan many hits cheaply. Optionally narrow by chat, sender, time range, ' +
-          'or message type. Use this when you need to find specific content; use ' +
-          '`get_conversation` to pull the surrounding context once you have a target message.',
+          'Full-text search across the message archive. Answers with the matching lines ' +
+          'grouped by chat, newest first — snippets rather than full bodies, so you can scan ' +
+          'many hits cheaply. Each hit ends with its message id. Optionally narrow by chat, ' +
+          'sender, time range, or message type. Use this when you need to find specific ' +
+          'content; use `get_conversation` with that id to pull the surrounding context.',
         inputSchema: {
           query: z
             .string()
@@ -227,6 +435,11 @@ const searchMessagesTool: McpTool = {
             .default(20)
             .optional()
             .describe('Maximum number of results. Default 20, max 100.'),
+          timezone: z
+            .string()
+            .default('UTC')
+            .optional()
+            .describe('IANA timezone (e.g. "America/Sao_Paulo") used for the timestamps on each hit. Defaults to UTC.'),
         },
         annotations: {
           readOnlyHint: true,
@@ -234,23 +447,28 @@ const searchMessagesTool: McpTool = {
           openWorldHint: false,
         },
       },
-      async ({ query, chat, from, after, before, types, limit }) => {
+      async ({ query, chat, from, after, before, types, limit, timezone }) => {
         try {
           let remoteJid: string | undefined;
+          let chatLabel: string | undefined;
           if (chat) {
             const r = resolveOrError(chat, 'chat');
             if (!r.ok) return errorResult(r.message);
             remoteJid = r.jid;
+            chatLabel = safeLabel(r.name, r.jid);
           }
 
           let fromJid: string | undefined;
+          let fromLabel: string | undefined;
           if (from) {
             if (isJid(from)) {
               fromJid = from;
+              fromLabel = safeLabel(senderNameFor(from, undefined), from);
             } else {
               const r = resolveOrError(from, 'from', true);
               if (!r.ok) return errorResult(r.message);
               fromJid = r.jid;
+              fromLabel = safeLabel(r.name, r.jid);
             }
           }
 
@@ -264,30 +482,27 @@ const searchMessagesTool: McpTool = {
           }
 
           const finalLimit = limit ?? 20;
-          // If we have exactly one type filter, push it down to the SQL; otherwise we
-          // fetch a wider pool and filter in memory below.
-          const singleType = types && types.length === 1 ? types[0] : undefined;
-          const fetchLimit =
-            types && types.length > 1 ? Math.min(500, finalLimit * 5) : finalLimit;
 
+          // The type filter goes down to SQLite whether there is one of them or
+          // five. It used to be applied in memory over a wider fetch, which cost
+          // two things worth naming: `total` was the *unfiltered* count, and
+          // anything past the 500-row pool was silently dropped. The count is
+          // load-bearing now — it is rendered as "… N more matches" followed by
+          // the call that fetches them — so it has to be the count of what the
+          // caller actually asked for.
           const result = messagesRepo.query({
             search: query,
             remote_jid: remoteJid,
             from_jid: fromJid,
-            message_type: singleType,
+            message_types: types,
             after: afterSec ?? undefined,
             before: beforeSec ?? undefined,
-            limit: fetchLimit,
+            limit: finalLimit,
             offset: 0,
             order: 'desc',
           });
 
-          let rows = result.data;
-          if (types && types.length > 1) {
-            const set = new Set(types);
-            rows = rows.filter((m) => m.message_type && set.has(m.message_type));
-            rows = rows.slice(0, finalLimit);
-          }
+          const rows = result.data;
 
           const chatCache = new Map<string, ChatRow | undefined>();
           const results = rows.map((m) => {
@@ -306,11 +521,49 @@ const searchMessagesTool: McpTool = {
             };
           });
 
-          return jsonResult({
+          // Unchanged, field for field, from what this tool has always returned:
+          // programmatic clients read `structuredContent` and must see no
+          // difference. Only the model-facing half below becomes prose.
+          const structured = {
             total: result.total,
             returned: results.length,
             results,
+          };
+
+          const tz = timezone ?? 'UTC';
+
+          // What the caller could not fit on this page, and the call that
+          // fetches it. A bigger `limit` is the cheapest way there while there
+          // is headroom; once the page is already 100 rows wide there is no
+          // pagination left to offer and narrowing is the only honest advice.
+          const more = Math.max(result.total - results.length, 0);
+          const nextLimit = Math.min(100, result.total);
+          const moreCall =
+            more > 0 && nextLimit > finalLimit
+              ? withTypes(
+                  continuation('search_messages', {
+                    query, chat, from, after, before, limit: nextLimit, timezone,
+                  }),
+                  types,
+                )
+              : undefined;
+
+          const filters: string[] = [];
+          if (fromLabel) filters.push(`from ${fromLabel}`);
+          if (afterSec !== null) filters.push(`after ${formatStamp(afterSec, tz)}`);
+          if (beforeSec !== null) filters.push(`before ${formatStamp(beforeSec, tz)}`);
+          if (types && types.length > 0) filters.push(`of type ${types.join('/')}`);
+
+          const prose = renderSearchHits(results, {
+            query,
+            total: result.total,
+            timezone: tz,
+            chat_label: chatLabel,
+            filters,
+            more_call: moreCall,
           });
+
+          return proseResult(prose, structured);
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           return errorResult(`search_messages failed: ${message}`);
@@ -730,6 +983,17 @@ const getConversationTool: McpTool = {
             .default(true)
             .optional()
             .describe('Show a preview of quoted messages above replies.'),
+          max_chars: z.coerce
+            .number()
+            .int()
+            .min(500)
+            .max(200_000)
+            .optional()
+            .describe(
+              `Character ceiling on the transcript. Default ${TRANSCRIPT_BUDGET}. The oldest ` +
+                'messages are dropped first and a note says how many; the newest message is ' +
+                'always kept whole. Raise it to read further back in one call.',
+            ),
         },
         annotations: {
           readOnlyHint: true,
@@ -747,6 +1011,7 @@ const getConversationTool: McpTool = {
         include_id,
         include_reactions,
         include_quoted,
+        max_chars,
       }) => {
         try {
           const r = resolveOrError(chat, 'chat');
@@ -759,12 +1024,32 @@ const getConversationTool: McpTool = {
           }
 
           const tz = (timezone && isValidTz(timezone)) ? timezone : 'UTC';
+          const budget = max_chars ?? TRANSCRIPT_BUDGET;
+
+          // The way out of a truncated transcript is a bigger ceiling, so the
+          // hint asks for one — doubled, because a caller told "raise it" and
+          // left to guess by how much will guess too small and come back twice.
+          // A chat we have no name for is skipped rather than quoted back as a
+          // masked label: `get_conversation(chat="…4821 (group)")` resolves to
+          // nothing, and an instruction that does not run is worse than the
+          // renderer's generic advice.
+          const named = chatName && !JID_SHAPE.test(chatName) ? chatName : undefined;
+          const truncationHint = named
+            ? continuation('get_conversation', {
+                chat: named,
+                last_n,
+                max_chars: Math.min(budget * 2, 200_000),
+              })
+            : undefined;
+
           const renderOpts = {
             timezone: tz,
             include_id: include_id ?? false,
             include_reactions: include_reactions ?? true,
             include_quoted: include_quoted ?? true,
             chat_label: chatName,
+            budget,
+            truncation_hint: truncationHint,
           };
 
           let messages: MessageRow[];

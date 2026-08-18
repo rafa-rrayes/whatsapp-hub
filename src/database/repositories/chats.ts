@@ -74,4 +74,18 @@ export const chatsRepo = {
   getByJid(jid: string): ChatRow | undefined {
     return getDb().prepare('SELECT * FROM chats WHERE jid = ?').get(jid) as ChatRow | undefined;
   },
+
+  /**
+   * Reset a chat's unread counter after its messages have been acknowledged.
+   *
+   * Deliberately a direct UPDATE rather than a trip through `upsert`: that path
+   * COALESCEs `unread_count` (so it can never be forced down to 0) and inserts a
+   * row when the JID is unknown. "Mark this existing chat read" must do neither,
+   * so an unknown JID is a silent no-op here.
+   */
+  clearUnread(jid: string): void {
+    getDb()
+      .prepare(`UPDATE chats SET unread_count = 0, updated_at = datetime('now') WHERE jid = ?`)
+      .run(jid);
+  },
 };

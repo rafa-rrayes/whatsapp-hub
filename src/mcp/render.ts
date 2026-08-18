@@ -11,6 +11,24 @@ export interface RenderOptions {
   chat_label?: string;
   /** Optional prefix line — e.g., the chat JID — placed under the title. */
   subtitle?: string;
+  /**
+   * Maximum characters of rendered output. Omitted, `undefined` or `<= 0` means
+   * unlimited, and the output is then byte-identical to the pre-budget renderer.
+   *
+   * The budget bounds how much *history* comes back, never whether the newest
+   * message arrives intact: messages are dropped oldest-first, and a single
+   * message larger than the whole budget still renders in full. The transcript
+   * is never emptied to satisfy the budget.
+   */
+  budget?: number;
+  /**
+   * A literal follow-up call supplied by the caller — e.g.
+   * `get_conversation(chat="Família", last_n=100)`. Quoted verbatim in the
+   * truncation note so the model knows how to reach the dropped history. The
+   * tool layer knows its own name and arguments; the renderer does not, and
+   * must never invent one.
+   */
+  truncation_hint?: string;
 }
 
 const DEFAULTS = {
@@ -77,6 +95,61 @@ function collectReactions(messages: MessageRow[]): Map<string, AttachedReaction[
 }
 
 /**
+ * One rendered message: the quoted-reply line, the message line, the reactions
+ * line and the trailing blank line all belong to the same message and are kept
+ * together. The `## date` header is *not* part of the block — it is emitted at
+ * assembly time so that trimming from the front can drop a now-orphaned header
+ * and give the first surviving message a header of its own.
+ */
+interface MessageBlock {
+  /** `YYYY-MM-DD` group key. */
+  date: string;
+  lines: string[];
+}
+
+/**
+ * Cost of a group of lines once joined with `\n`. Counts one newline per line,
+ * which over-counts the final join by exactly one character — budget checks are
+ * therefore conservative by a character, never optimistic.
+ */
+function linesCost(lines: string[]): number {
+  let n = 0;
+  for (const l of lines) n += l.length + 1;
+  return n;
+}
+
+function dateHeaderLines(date: string): string[] {
+  return [`## ${date}`, ''];
+}
+
+/** Assembles the final markdown, inserting a `## date` header on every change. */
+function assemble(prefix: string[], blocks: MessageBlock[]): string {
+  const lines = [...prefix];
+  let lastDate = '';
+  for (const b of blocks) {
+    if (b.date !== lastDate) {
+      lines.push(...dateHeaderLines(b.date));
+      lastDate = b.date;
+    }
+    lines.push(...b.lines);
+  }
+  return lines.join('\n');
+}
+
+/**
+ * The note shown when history was dropped. A bare "truncated: true" tells a
+ * model something is missing but not how to reach it, so the caller-supplied
+ * continuation call is quoted verbatim when there is one.
+ */
+function truncationNote(dropped: number, hint?: string): string {
+  const what = dropped === 1 ? '1 earlier message' : `${dropped} earlier messages`;
+  const how = hint
+    ? `To read them: ${hint}`
+    : 'Request a larger budget or a narrower range to read them.';
+  return `_[${what} omitted to fit the character budget. ${how}]_`;
+}
+
+/**
  * Renders a chronological message slice as compact markdown optimized for
  * LLM consumption. Uses the export pipeline's NameResolver so contact names
  * resolve the same way as `/api/export`.
@@ -100,24 +173,21 @@ export function renderConversation(messages: MessageRow[], opts: RenderOptions =
 
   const reactionsByTarget = o.include_reactions ? collectReactions(messages) : new Map<string, AttachedReaction[]>();
 
-  const lines: string[] = [];
+  const prefix: string[] = [];
   if (opts.chat_label) {
-    lines.push(`# ${opts.chat_label}`);
-    if (opts.subtitle) lines.push(`_${opts.subtitle}_`);
-    lines.push('');
+    prefix.push(`# ${opts.chat_label}`);
+    if (opts.subtitle) prefix.push(`_${opts.subtitle}_`);
+    prefix.push('');
   }
 
-  let lastDate = '';
+  const blocks: MessageBlock[] = [];
   for (const msg of messages) {
-    // Reactions are attached inline — skip the raw reaction rows.
+    // Reactions are attached inline — skip the raw reaction rows. They are not
+    // messages for trimming purposes either: they ride along with their target.
     if (o.include_reactions && msg.message_type === 'reaction') continue;
 
     const date = dateFmt.format(new Date(msg.timestamp * 1000));
-    if (date !== lastDate) {
-      lines.push(`## ${date}`);
-      lines.push('');
-      lastDate = date;
-    }
+    const lines: string[] = [];
 
     const time = timeFmt.format(new Date(msg.timestamp * 1000));
     const senderJid = msg.from_me === 1 ? undefined : (msg.participant || msg.from_jid);
@@ -170,7 +240,43 @@ export function renderConversation(messages: MessageRow[], opts: RenderOptions =
     }
 
     lines.push('');
+    blocks.push({ date, lines });
   }
 
-  return lines.join('\n');
+  const full = assemble(prefix, blocks);
+
+  // No budget (or a nonsensical one) → unlimited, byte-identical to before.
+  const budget = typeof o.budget === 'number' && o.budget > 0 ? o.budget : 0;
+  if (budget === 0 || full.length <= budget) return full;
+
+  // Budget accounting includes *everything* returned — the chat title header
+  // and the truncation note count against it too, so a caller that asks for
+  // N characters gets at most N back (the sole exception being a single
+  // message that alone exceeds the budget; it is the newest thing and the
+  // caller asked for it, so it is never trimmed or dropped).
+  const reserve = linesCost(prefix)
+    + linesCost([truncationNote(Math.max(blocks.length - 1, 0), o.truncation_hint), '']);
+  const available = Math.max(0, budget - reserve);
+
+  // Walk newest → oldest, keeping the longest suffix that fits. Adding a block
+  // to the front costs its own lines plus a date header, and refunds the header
+  // of the block that used to be first when they share a date.
+  let cost = 0;
+  let first = Math.max(blocks.length - 1, 0);
+  for (let i = blocks.length - 1; i >= 0; i--) {
+    let next = cost + linesCost(blocks[i].lines) + linesCost(dateHeaderLines(blocks[i].date));
+    const prev = blocks[i + 1];
+    if (prev && prev.date === blocks[i].date) next -= linesCost(dateHeaderLines(prev.date));
+    // The newest block is unconditional: never return an empty transcript.
+    if (i < blocks.length - 1 && next > available) break;
+    cost = next;
+    first = i;
+  }
+
+  // Nothing actually dropped (a single oversized message, or none at all):
+  // there is no missing history to point at, so no note is emitted.
+  if (first <= 0) return full;
+
+  const note = truncationNote(first, o.truncation_hint);
+  return assemble([...prefix, note, ''], blocks.slice(first));
 }

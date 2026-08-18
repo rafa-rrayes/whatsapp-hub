@@ -105,6 +105,16 @@ export interface MessageQuery {
   from_jid?: string;
   from_me?: boolean;
   message_type?: string;
+  /**
+   * Several types at once, as `message_type IN (…)`. Separate from the
+   * single-value `message_type` because callers of that one pass a plain string
+   * and there is no reason to make them wrap it.
+   *
+   * An empty array means "no type filter", which is what a caller handing us
+   * its own empty list of types means; a query that matched nothing at all
+   * would be a surprising reading of "I didn't narrow this".
+   */
+  message_types?: string[];
   search?: string;
   before?: number;
   after?: number;
@@ -216,6 +226,16 @@ export const messagesRepo = {
     if (q.message_type) {
       conditions.push('messages.message_type = @message_type');
       params.message_type = q.message_type;
+    }
+    if (q.message_types && q.message_types.length > 0) {
+      // One bound parameter per type. The placeholder names come from the
+      // index, never from the value — the types themselves reach SQLite as
+      // parameters, the same as every other filter here.
+      const placeholders = q.message_types.map((_, i) => `@message_type_${i}`);
+      conditions.push(`messages.message_type IN (${placeholders.join(', ')})`);
+      q.message_types.forEach((t, i) => {
+        params[`message_type_${i}`] = t;
+      });
     }
     if (q.search) {
       // Try FTS5 first, fall back to LIKE if table doesn't exist
