@@ -5,7 +5,11 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements-transcription.txt /tmp/requirements-transcription.txt
+# Bookworm's bundled pip (23.0.1) rejects wheels whose metadata Name uses
+# underscores (e.g. typing_extensions>=4.16) and then cannot build the sdist
+# fallback because the PyTorch index has no flit_core; upgrade pip first.
 RUN python3 -m venv /opt/crisperwhisper \
+    && /opt/crisperwhisper/bin/pip install --no-cache-dir --upgrade pip \
     && /opt/crisperwhisper/bin/pip install --no-cache-dir \
       --index-url https://download.pytorch.org/whl/cpu "torch>=2.4" \
     && /opt/crisperwhisper/bin/pip install --no-cache-dir \
