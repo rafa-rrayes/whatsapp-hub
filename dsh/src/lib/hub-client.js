@@ -96,6 +96,30 @@ export function createHubClient(config) {
   }
   const getMessage = (id) => get(`/api/messages/${encodeURIComponent(id)}`)
 
+  /**
+   * Export one or more full conversations through the hub's export pipeline
+   * (POST /api/export). This is the "entire conversation for N days" primitive:
+   * returns a rendered transcript (markdown by default) that a subagent can
+   * read in one shot — unlike wa_get_conversation, which only pages recent
+   * messages.
+   * @param {Object} [opts]
+   * @param {number} [opts.days] trailing window in days (omit for all-time)
+   * @param {string[]} [opts.chats] JIDs to export (omit for all chats in window)
+   * @param {string} [opts.preset] 'concise'|'full'|'llm'|'archive' (default llm)
+   * @param {string} [opts.format] 'md'|'txt'|'json' (default md)
+   * @param {number} [opts.max_messages] hard cap across chats (default 5000)
+   * @param {string} [opts.timezone] IANA tz for timestamps (default UTC)
+   */
+  const exportConversation = (opts = {}) =>
+    post('/api/export', {
+      days: opts.days,
+      chats: opts.chats,
+      preset: opts.preset || 'llm',
+      format: opts.format || 'md',
+      max_messages: opts.max_messages || 5000,
+      timezone: opts.timezone || 'UTC',
+    })
+
   // ── Write ───────────────────────────────────────────────────────────────
   const sendText = (jid, text, quotedId) =>
     post('/api/actions/send/text', { jid, text, ...(quotedId ? { quoted_id: quotedId } : {}) })
@@ -176,6 +200,7 @@ export function createHubClient(config) {
     searchMessages,
     recentMessages,
     getMessage,
+    exportConversation,
     sendText,
     react,
     markRead,

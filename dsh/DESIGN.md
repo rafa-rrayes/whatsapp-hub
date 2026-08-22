@@ -184,6 +184,7 @@ plentiful; write tools are few, guarded, and verifiable.
 | `wa_list_chats` | Browse chats (unread, group/DM, name, recency). |
 | `wa_recent_activity` | Activity over a window (summary / firehose). |
 | `wa_get_conversation` | Render one chat as markdown (last N / window). |
+| `wa_export_conversation` | Full-transcript export for a window / chat set (the "analyze N days" primitive). |
 | `wa_search_messages` | Full-text search with snippets. |
 | `wa_get_message` | One message by id with full context. |
 | `wa_get_thread` | Walk the quote chain backward. |

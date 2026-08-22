@@ -216,6 +216,26 @@ function registerTools(ctx, { hub, store, outbox, config }) {
     return { ok: r.ok, results: r.data }
   }))
 
+  register(rawTool('wa_export_conversation', 'Export one or more full conversations as a rendered transcript (markdown by default) through the hub export pipeline. This is the "entire conversation for N days" primitive for deep analysis — unlike wa_get_conversation, which only pages recent messages. Returns the transcript inline; use it to hand a whole chat to a subagent for analysis or report generation.', {
+    days: { type: 'integer', description: 'Trailing window in days. Omit for all-time.' },
+    chats: { type: 'array', items: { type: 'string' }, description: 'Optional list of chat JIDs to export. Omit for all chats in the window.' },
+    preset: { type: 'string', enum: ['concise', 'full', 'llm', 'archive'], description: 'Field bundle per message. Default llm.' },
+    format: { type: 'string', enum: ['md', 'txt', 'json'], description: 'Output format. Default md.' },
+    max_messages: { type: 'integer', description: 'Hard cap on total messages across chats (default 5000).' },
+    timezone: { type: 'string', description: 'IANA timezone for timestamps. Default UTC.' },
+  }, async (args) => {
+    const res = await hub.exportConversation({
+      days: args.days,
+      chats: args.chats,
+      preset: args.preset,
+      format: args.format,
+      max_messages: args.max_messages,
+      timezone: args.timezone,
+    })
+    if (!res.ok) return { ok: false, status: res.status, error: (res.data && res.data.error) || res.data || 'export failed' }
+    return { ok: true, format: args.format || 'md', content: res.data }
+  }))
+
   register(rawTool('wa_get_message', 'Fetch one message by id with full context.', {
     id: { type: 'string', description: 'Message id.', required: true },
   }, async (args) => {

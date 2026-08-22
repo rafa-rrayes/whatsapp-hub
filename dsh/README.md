@@ -33,6 +33,8 @@ dsh/
 │       ├── memory-store.js            # durable memory + briefing
 │       ├── outbox.js                  # write-ahead idempotent sends
 │       └── operating-contract.js      # the contract string
+├── skills/
+│   └── chat-reports/SKILL.md          # multi-subagent per-chat report playbook
 └── preset/
     └── agent.cordis.yml.example       # optional additive preset template
 ```
@@ -124,8 +126,8 @@ curl -s http://127.0.0.1:3080/whatsapp/webhook/status
 ## Tool reference
 
 Read: `wa_overview`, `wa_analytics`, `wa_resolve_chat`, `wa_list_chats`,
-`wa_recent_activity`, `wa_get_conversation`, `wa_search_messages`,
-`wa_get_message`.
+`wa_recent_activity`, `wa_get_conversation`, `wa_export_conversation`,
+`wa_search_messages`, `wa_get_message`.
 
 Write: `wa_send_message`, `wa_react_to_message`, `wa_mark_read`.
 
@@ -154,6 +156,37 @@ wa_analytics(days=7)
 `distinctChats` is the count of distinct chats with messages in the window —
 no paging through history needed. Older hub builds that lack the field return
 `distinctChats: null` and the tool still works.
+
+### `wa_export_conversation`
+
+`wa_export_conversation` is the "entire conversation for N days" primitive. It
+proxies the hub's export pipeline (`POST /api/export`) and returns a rendered
+transcript inline — markdown by default, or `txt`/`json`:
+
+```text
+wa_export_conversation(days=7, chats=["<jid>"], preset="llm", format="md", max_messages=5000)
+→ { ok, format, content }   # content is the full transcript
+```
+
+`preset` controls field depth (`concise` / `full` / `llm` / `archive`); omit
+`days` for all-time (bounded by `max_messages`). This is what makes
+multi-chat analysis possible — unlike `wa_get_conversation`, which only pages
+recent messages.
+
+### `chat-reports` skill
+
+For "analyze N chats and give me a report", pair `wa_export_conversation` with
+the bundled `chat-reports` skill (`dsh/skills/chat-reports/`). It encodes the
+fan-out pattern: pick chats with `wa_analytics`/`wa_list_chats`, spawn one
+subagent per chat (each fetches its own export and writes a bounded report),
+then merge into a summary. Install it by symlinking into your DSH skills dir:
+
+```bash
+ln -sfn "$(pwd)/dsh/skills/chat-reports" ~/.agents/skills/chat-reports
+```
+
+This keeps the plugin as the data seam and the skill as the orchestration
+playbook — no monolithic "report" tool that inlines megabytes of transcript.
 
 ## Direct HTTP access to the hub (tooling note)
 
