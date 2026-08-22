@@ -25,7 +25,8 @@ dsh/
 ├── README.md                          # this file
 ├── package.json                       # plugin manifest
 ├── src/
-│   ├── index.js                       # plugin entry (tools, webhook, agent)
+│   ├── index.js                       # plugin entry (tools, webhook, agent, panel routes)
+│   ├── client.js                      # client reference source (plain ESM)
 │   ├── operating-contract.md          # human-readable contract
 │   └── lib/
 │       ├── hub-client.js              # whatsapp-hub REST client
@@ -33,6 +34,8 @@ dsh/
 │       ├── memory-store.js            # durable memory + briefing
 │       ├── outbox.js                  # write-ahead idempotent sends
 │       └── operating-contract.js      # the contract string
+├── lib/
+│   └── client.js                      # pre-built client bundle (what actually loads)
 ├── skills/
 │   └── chat-reports/SKILL.md          # multi-subagent per-chat report playbook
 └── preset/
@@ -78,25 +81,34 @@ only node builtins + relative files, and the client half is pre-built to
 
 ## Settings panel (DSH web)
 
-The package ships a **"WhatsApp Agent"** page in the DSH web Settings panel
-(`dsh/src/client.js`) — a **permanent** client half, unlike the dynamic demo
-below. It shows live bridge status, lets you edit the runtime config, and can
-fire a test send.
+The package ships a **"WhatsApp Agent"** page in the DSH web Settings panel —
+a **permanent** client half, unlike the dynamic demo below. It's a live bridge
+dashboard: connection state, 7-day message analytics, runtime config editing,
+a test send, the outbox activity log, and durable memory (pending commitments
++ lessons).
 
 The client half rides the deployment's client-module build:
 
 1. `package.json` declares `dsh.client` (platform `web`, injects
-   `@deepseek-ai/dsh-client-runtime`) and exports `./client` → `src/client.js`.
+   `@deepseek-ai/dsh-client-runtime`) and exports `./client` → `lib/client.js`.
 2. Once the package is installed and mounted in the host composition, DSH's
-   client-module scanner discovers `dsh.client`, compiles `src/client.js`, and
-   serves it — the section then appears under **Settings → WhatsApp Agent**.
+   client-module scanner serves that file as a `window.__ModuleLoader__` bundle
+   at `/plugins/@rafa/dsh-whatsapp-agent/client.js` — the section then appears
+   under **Settings → WhatsApp Agent**. `src/client.js` is the readable ESM
+   reference source; `lib/client.js` is the hand-maintained bundle that actually
+   loads. **Keep them in sync.**
 3. The panel calls the Host through these same-origin routes (see `src/index.js`):
 
    | Route | Purpose |
    |---|---|
-   | `GET /whatsapp/panel/status` | live bridge status |
+   | `GET /whatsapp/panel/status` | connection + hub overview + 7-day analytics + memory + recent outbox |
+   | `GET /whatsapp/panel/outbox` | full activity log (recent sends) |
    | `GET / POST /whatsapp/panel/config` | read / update runtime config |
    | `POST /whatsapp/panel/test-send` | send a test message through the outbox |
+
+The panel themes itself off the `--dsw-*` design tokens (one self-injected
+`<style>` tag) and uses only `react` from the loader — no emoji, inline SVG
+icons, and a desaturated teal accent.
 
 Runtime edits (hub URL, API key, webhook secret, poll interval) take effect
 immediately and reset to the composition `config` on the next reload. The panel

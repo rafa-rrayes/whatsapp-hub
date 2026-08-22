@@ -415,10 +415,50 @@ export async function apply(ctx, rawConfig = {}) {
   // Panel routes (same-origin; the client bundle fetches these).
   const webServer = ctx.get('webServer')
   if (webServer) {
-    const status = () => ({
+    // Keep the settings panel snappy: hub calls get a hard timeout and degrade
+    // to partial data instead of hanging the route.
+    const PING_TIMEOUT_MS = 6000
+    const withTimeout = (promise) => Promise.race([
+      promise,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), PING_TIMEOUT_MS)),
+    ])
+
+    const isEcho = () => runtime.echoMode === true || !runtime.apiKey
+
+    // Hub-derived facts, gathered with graceful degradation. In dry-run mode we
+    // skip overview/analytics entirely (there is no live hub to describe).
+    async function hubFacts() {
+      const facts = { connected: false, overview: null, analytics: null }
+      try {
+        const h = await withTimeout(hub.health())
+        facts.connected = !!(h && h.ok)
+      } catch { facts.connected = false }
+      if (isEcho()) return facts
+      try {
+        const o = await withTimeout(hub.overview())
+        if (o && o.ok) facts.overview = o.data || null
+      } catch { facts.overview = null }
+      try {
+        const a = await withTimeout(hub.analytics({ days: 7 }))
+        if (a && a.ok) facts.analytics = a.data || null
+      } catch { facts.analytics = null }
+      return facts
+    }
+
+    function outboxHistory(limit = 12) {
+      return store.outboxEntries()
+        .map(([key, r]) => ({
+          key, jid: r.jid, kind: r.kind, status: r.status,
+          hubMessageId: r.hubMessageId, createdAt: r.createdAt, lastError: r.lastError,
+        }))
+        .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+        .slice(0, limit)
+    }
+
+    const baseStatus = () => ({
       ok: true,
       agent: runtime.agentSessionId,
-      echoMode: runtime.echoMode === true || !runtime.apiKey,
+      echoMode: isEcho(),
       hubUrl: runtime.hubUrl,
       apiKeySet: !!runtime.apiKey,
       webhookSecretSet: !!runtime.webhookSecret,
@@ -428,11 +468,19 @@ export async function apply(ctx, rawConfig = {}) {
       chatsTracked: Object.keys(store.snapshot().chats || {}).length,
       outboxPending: store.outboxEntries().filter(([, r]) => r.status === 'pending' || r.status === 'failed').length,
       pending: store.pending(),
-      lessons: (store.snapshot().lessons || []).slice(-6),
+      lessons: (store.snapshot().lessons || []).slice(-8),
+      outbox: outboxHistory(12),
     })
 
-    webServer.register({ kind: 'exact', path: `${runtime.webhookPath}/status`, handler: (_req, res) => sendJson(res, 200, status()) })
-    webServer.register({ kind: 'exact', path: '/whatsapp/panel/status', handler: (_req, res) => sendJson(res, 200, status()) })
+    webServer.register({ kind: 'exact', path: `${runtime.webhookPath}/status`, handler: async (_req, res) => {
+      sendJson(res, 200, { ...baseStatus(), ...(await hubFacts()) })
+    }})
+    webServer.register({ kind: 'exact', path: '/whatsapp/panel/status', handler: async (_req, res) => {
+      sendJson(res, 200, { ...baseStatus(), ...(await hubFacts()) })
+    }})
+    webServer.register({ kind: 'exact', path: '/whatsapp/panel/outbox', handler: (_req, res) => {
+      sendJson(res, 200, { ok: true, outbox: outboxHistory(50) })
+    }})
 
     webServer.register({
       kind: 'exact',
@@ -445,7 +493,7 @@ export async function apply(ctx, rawConfig = {}) {
           if (typeof patch.webhookSecret === 'string' && patch.webhookSecret) runtime.webhookSecret = patch.webhookSecret
           if (typeof patch.pollMs === 'number' && patch.pollMs >= 0) runtime.pollMs = patch.pollMs
           if (typeof patch.echoMode === 'boolean') runtime.echoMode = patch.echoMode
-          sendJson(res, 200, status())
+          sendJson(res, 200, baseStatus())
           return
         }
         sendJson(res, 200, {
@@ -455,7 +503,7 @@ export async function apply(ctx, rawConfig = {}) {
           webhookPath: runtime.webhookPath,
           agentSessionId: runtime.agentSessionId,
           pollMs: runtime.pollMs,
-          echoMode: runtime.echoMode === true || !runtime.apiKey,
+          echoMode: isEcho(),
         })
       },
     })
