@@ -540,37 +540,41 @@ export async function apply(ctx, rawConfig = {}) {
     const p = store.getProfile()
     return !!(p.identity && p.identity.owner && p.identity.owner.jid)
   }
+  function enqueueOnboarding() {
+    const profile = store.getProfile()
+    if (profile.state && profile.state.onboarding === 'done') return
+    if (scheduler.list().some((e) => e.status === 'queued' && e.kind === 'onboarding')) return
+    store.setProfile({
+      state: {
+        onboarding: 'in-progress',
+        onboardingStep: profile.state && profile.state.onboardingStep != null ? profile.state.onboardingStep : 0,
+      },
+    })
+    scheduler.enqueue({ at: Date.now(), kind: 'onboarding' })
+    console.log('[whatsapp-agent] enqueued onboarding wake')
+  }
   function resolveOwnerFromConfig() {
     if (ownerSet()) return
     const jid = normalizeJid(runtime.ownerJid)
     if (!jid) return
     store.setProfile({ identity: { owner: { jid } } })
     console.log(`[whatsapp-agent] owner set from config: ${jid}`)
+    enqueueOnboarding()
   }
   function resolveOwnerFromInbound(identity) {
     if (ownerSet() || !identity || !identity.jid) return
     if (identity.jid.includes('@g.us') || identity.jid.includes('@broadcast')) return
     store.setProfile({ identity: { owner: { jid: identity.jid, name: identity.pushName || 'Owner' } } })
     console.log(`[whatsapp-agent] owner set from first inbound sender: ${identity.jid}`)
+    enqueueOnboarding()
   }
 
   // ── wake bootstrap (onboarding + periodic self-review) ───────────────────
   function bootstrapWakes() {
-    const profile = store.getProfile()
-    const queuedKinds = new Set(scheduler.list().filter((e) => e.status === 'queued').map((e) => e.kind))
-
-    if (profile.state && profile.state.onboarding !== 'done' && !queuedKinds.has('onboarding')) {
-      store.setProfile({
-        state: {
-          onboarding: 'in-progress',
-          onboardingStep: profile.state.onboardingStep == null ? 0 : profile.state.onboardingStep,
-        },
-      })
-      scheduler.enqueue({ at: Date.now(), kind: 'onboarding' })
-      console.log('[whatsapp-agent] enqueued onboarding wake')
-    }
-
-    if (!queuedKinds.has('self-review')) {
+    // Onboarding needs a known owner to DM; if none is configured and no one
+    // has messaged yet, it is enqueued later from the owner-resolution paths.
+    if (ownerSet()) enqueueOnboarding()
+    if (!scheduler.list().some((e) => e.status === 'queued' && e.kind === 'self-review')) {
       scheduler.enqueue({ at: Date.now() + scheduler.DAY_MS, kind: 'self-review' })
       console.log('[whatsapp-agent] enqueued self-review wake')
     }
