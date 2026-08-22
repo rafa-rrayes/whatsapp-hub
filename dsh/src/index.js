@@ -27,6 +27,8 @@ import { createHubClient } from './lib/hub-client.js'
 import { createMemoryStore } from './lib/memory-store.js'
 import { createOutbox } from './lib/outbox.js'
 import { createInbound } from './lib/inbound.js'
+import { createScheduler, buildWakePrompt } from './lib/scheduler.js'
+import { GATED_FIELDS, validateProfile } from './lib/profile.js'
 import { OPERATING_CONTRACT } from './lib/operating-contract.js'
 
 const DEFAULTS = {
@@ -41,6 +43,7 @@ const DEFAULTS = {
   pollMs: 60000,
   stateFile: '.whatsapp-agent-state.json',
   echoMode: false,
+  ownerJid: '',
 }
 
 function resolveConfig(raw = {}) {
@@ -65,6 +68,44 @@ function normalizeJid(input) {
   if (/@s\.whatsapp\.net$|@g\.us$|@broadcast$/.test(s)) return s
   if (/^\d{6,}$/.test(s)) return `${s}@s.whatsapp.net`
   return null // a bare name — the agent must call wa_resolve_chat first
+}
+
+/** Read a dotted path from a Profile object (undefined when missing). */
+function getByPath(obj, path) {
+  let cur = obj
+  for (const seg of String(path).split('.')) {
+    if (cur == null) return undefined
+    cur = cur[seg]
+  }
+  return cur
+}
+
+/** Mutate a dotted path on a Profile object (creating missing intermediates). */
+function setByPath(obj, path, value) {
+  const segs = String(path).split('.')
+  let cur = obj
+  for (let i = 0; i < segs.length - 1; i++) {
+    const seg = segs[i]
+    if (cur[seg] == null || typeof cur[seg] !== 'object' || Array.isArray(cur[seg])) cur[seg] = {}
+    cur = cur[seg]
+  }
+  cur[segs[segs.length - 1]] = value
+  return obj
+}
+
+/** True when the first segment of a dotted path is an owner-gated Profile key. */
+function isGatedPath(path) {
+  return GATED_FIELDS.includes(String(path || '').split('.')[0])
+}
+
+/** Parse a schedule time: Unix ms (number or digit string) or ISO 8601 string. */
+function parseAt(input) {
+  if (input == null) return null
+  if (typeof input === 'number' && Number.isFinite(input)) return input
+  const s = String(input).trim()
+  if (/^\d{10,13}$/.test(s)) return Number(s)
+  const t = Date.parse(s)
+  return Number.isNaN(t) ? null : t
 }
 
 function readJsonBody(req) {
@@ -125,7 +166,7 @@ async function makePersistence(config) {
 
 // ── tools ──────────────────────────────────────────────────────────────────
 
-function registerTools(ctx, { hub, store, outbox, config }) {
+function registerTools(ctx, { hub, store, outbox, config, scheduler }) {
   const register = (tool) => ctx.tools.register(tool)
 
   register(rawTool('wa_overview', 'WhatsApp hub dashboard totals + connection state. Call first to orient before any other WhatsApp work. Includes the hub endpoint the plugin is wired to, whether an API key is set, and live connectivity (health probe).', {}, async () => {
@@ -314,6 +355,108 @@ function registerTools(ctx, { hub, store, outbox, config }) {
     }
     return { ok: true, key: rec.key, jid: rec.jid, kind: rec.kind, status: rec.status, hubConfirmed, hubMessageId: rec.hubMessageId, createdAt: rec.createdAt, lastError: rec.lastError }
   }))
+
+  // ── profile (owner-gated spine) ──────────────────────────────────────────
+
+  register(rawTool('wa_get_profile', 'Return the full Profile (mission, autonomy level, proactive/draft toggles, boundaries, inbox policy, schedule, tone) plus pending rule proposals, the recent changelog tail, and the scheduled wake queue. The Profile is the agent\'s durable, owner-configured spine: read it before any outbound send and before deciding whether a change needs a proposal.', {}, async () => {
+    const profile = store.getProfile()
+    return {
+      profile,
+      proposals: store.listProposals(),
+      changelog: (profile.changelog || []).slice(-10).reverse(),
+      wake: scheduler.list(),
+    }
+  }))
+
+  register(rawTool('wa_set_profile', 'Merge a patch into the FAST (agent-owned) parts of the Profile: state (onboarding/onboardingStep). Any owner-gated spine key (identity, mission, autonomy, boundaries, inboxPolicy, schedule, tone) is rejected — propose those via wa_propose_rule instead. Returns which keys were gated and the validation result.', {
+    patch: { type: 'object', description: 'Object of top-level Profile keys to merge, e.g. { state: { onboardingStep: 2 } }.', required: true },
+  }, async (args) => {
+    const patch = args.patch
+    if (!patch || typeof patch !== 'object' || Array.isArray(patch)) return { ok: false, error: 'patch must be an object' }
+    const protectedKeys = ['version', 'changelog']
+    const keys = Object.keys(patch)
+    const gated = keys.filter((k) => GATED_FIELDS.includes(k))
+    const protectedFields = keys.filter((k) => protectedKeys.includes(k))
+    const allowed = {}
+    for (const k of keys) if (!GATED_FIELDS.includes(k) && !protectedKeys.includes(k)) allowed[k] = patch[k]
+    if (Object.keys(allowed).length) store.setProfile(allowed)
+    const validation = validateProfile(store.getProfile())
+    return {
+      ok: gated.length === 0 && protectedFields.length === 0 && validation.ok,
+      applied: Object.keys(allowed),
+      gated,
+      protected: protectedFields,
+      hint: gated.length
+        ? `Owner-gated fields must go through wa_propose_rule: ${gated.join(', ')}`
+        : (protectedFields.length ? `Read-only fields ignored: ${protectedFields.join(', ')}` : undefined),
+      validation,
+    }
+  }))
+
+  register(rawTool('wa_propose_rule', 'Stage a change to an owner-gated Profile field (identity, mission, autonomy, boundaries, inboxPolicy, schedule, tone) as a proposal for the owner to approve. The change does NOT apply until the owner approves via wa_approve_rule. `before` is computed from the current Profile if omitted.', {
+    path: { type: 'string', description: 'Dotted path into the Profile, e.g. "autonomy.level" or "boundaries.forbidden".', required: true },
+    after: { description: 'Proposed new value for that path (any JSON type).', required: true },
+    reason: { type: 'string', description: 'Why this change is proposed.', required: true },
+    before: { description: 'Current value at that path (computed from the Profile if omitted).' },
+  }, async (args) => {
+    if (!isGatedPath(args.path)) {
+      return { ok: false, error: 'not an owner-gated path', gatedFields: GATED_FIELDS, hint: 'Only changes to the Profile spine can be proposed; fast state changes go through wa_set_profile.' }
+    }
+    const profile = store.getProfile()
+    const before = args.before !== undefined ? args.before : getByPath(profile, args.path)
+    const proposal = store.addProposal({ path: args.path, before, after: args.after, reason: args.reason })
+    return { ok: true, proposal }
+  }))
+
+  register(rawTool('wa_approve_rule', 'Approve or reject a staged Profile rule proposal (created by wa_propose_rule). On approve, the change is applied to the Profile and appended to the changelog with by: owner. On reject, the proposal is closed without applying.', {
+    id: { type: 'string', description: 'Proposal id.', required: true },
+    approve: { type: 'boolean', description: 'true to apply the change, false to reject.', required: true },
+  }, async (args) => {
+    const proposal = store.listProposals().find((p) => p.id === args.id)
+    if (!proposal) return { ok: false, error: 'no such proposal' }
+    if (proposal.status !== 'proposed') return { ok: false, error: `proposal already ${proposal.status}` }
+    if (!args.approve) {
+      store.updateProposal(args.id, { status: 'rejected' })
+      return { ok: true, status: 'rejected', proposal }
+    }
+    const profile = store.getProfile()
+    setByPath(profile, proposal.path, proposal.after)
+    store.setProfile(profile)
+    store.appendChangelog({ path: proposal.path, before: proposal.before, after: proposal.after, by: 'owner' })
+    store.updateProposal(args.id, { status: 'approved' })
+    return { ok: true, status: 'approved', proposal, profile: store.getProfile() }
+  }))
+
+  // ── scheduler tools ──────────────────────────────────────────────────────
+
+  register(rawTool('wa_schedule', 'Add a time-based wake intent to the durable scheduler queue. At the given time the host wakes the agent with a prompt stating the kind and args; the agent then reads the Profile and decides what to do. Use for digests, follow-ups, and periodic jobs. Intents inside quiet hours are deferred to the end of the window.', {
+    at: { description: 'When to wake: Unix ms (number or digit string) or an ISO 8601 string.', required: true },
+    kind: { type: 'string', description: 'Wake kind: digest | reminder | follow-up | self-review | keyword | onboarding.', required: true },
+    args: { type: 'object', description: 'Arbitrary details handed back in the wake prompt (e.g. { jid, text }).' },
+  }, async (args) => {
+    const at = parseAt(args.at)
+    if (at == null) return { ok: false, error: 'invalid time; use Unix ms or an ISO 8601 string' }
+    if (!args.kind || typeof args.kind !== 'string') return { ok: false, error: 'kind required' }
+    const intent = scheduler.enqueue({ at, kind: args.kind, args: args.args || {} })
+    return { ok: true, intent }
+  }))
+
+  register(rawTool('wa_remind', 'Schedule a one-shot reminder to a chat (shorthand for wa_schedule with kind reminder). At the time the host wakes the agent, which then sends or drafts the reminder per decideAction.', {
+    at: { description: 'When: Unix ms (number or digit string) or an ISO 8601 string.', required: true },
+    jid: { type: 'string', description: 'Recipient JID (resolve the chat first).', required: true },
+    text: { type: 'string', description: 'What to remind them of.', required: true },
+  }, async (args) => {
+    const at = parseAt(args.at)
+    if (at == null) return { ok: false, error: 'invalid time' }
+    const jid = normalizeJid(args.jid)
+    if (!jid) return { ok: false, error: 'unresolved recipient', hint: 'resolve the chat first' }
+    const intent = scheduler.enqueue({ at, kind: 'reminder', args: { jid, text: args.text } })
+    return { ok: true, intent }
+  }))
+
+  register(rawTool('wa_cancel', 'Cancel a scheduled wake intent by id (ids are returned by wa_schedule / wa_remind and listed in wa_get_profile.wake).', {
+    id: { type: 'string', description: 'Intent id.', required: true },
+  }, async (args) => scheduler.cancel(args.id)))
 }
 
 // ── agent bootstrap ────────────────────────────────────────────────────────
@@ -386,9 +529,58 @@ export async function apply(ctx, rawConfig = {}) {
   const hub = createHubClient(runtime)
   const store = createMemoryStore(await makePersistence(config))
   await store.init()
+  const scheduler = createScheduler({ store })
   const outbox = createOutbox({ hub, store, echoMode: () => runtime.echoMode === true || !runtime.apiKey })
 
+  // ── owner resolution ─────────────────────────────────────────────────────
+  // The owner is who the agent DMs for onboarding, escalations, and approvals.
+  // Prefer the config `ownerJid`; otherwise the first inbound non-group sender
+  // becomes the owner and is persisted to the Profile.
+  function ownerSet() {
+    const p = store.getProfile()
+    return !!(p.identity && p.identity.owner && p.identity.owner.jid)
+  }
+  function resolveOwnerFromConfig() {
+    if (ownerSet()) return
+    const jid = normalizeJid(runtime.ownerJid)
+    if (!jid) return
+    store.setProfile({ identity: { owner: { jid } } })
+    console.log(`[whatsapp-agent] owner set from config: ${jid}`)
+  }
+  function resolveOwnerFromInbound(identity) {
+    if (ownerSet() || !identity || !identity.jid) return
+    if (identity.jid.includes('@g.us') || identity.jid.includes('@broadcast')) return
+    store.setProfile({ identity: { owner: { jid: identity.jid, name: identity.pushName || 'Owner' } } })
+    console.log(`[whatsapp-agent] owner set from first inbound sender: ${identity.jid}`)
+  }
+
+  // ── wake bootstrap (onboarding + periodic self-review) ───────────────────
+  function bootstrapWakes() {
+    const profile = store.getProfile()
+    const queuedKinds = new Set(scheduler.list().filter((e) => e.status === 'queued').map((e) => e.kind))
+
+    if (profile.state && profile.state.onboarding !== 'done' && !queuedKinds.has('onboarding')) {
+      store.setProfile({
+        state: {
+          onboarding: 'in-progress',
+          onboardingStep: profile.state.onboardingStep == null ? 0 : profile.state.onboardingStep,
+        },
+      })
+      scheduler.enqueue({ at: Date.now(), kind: 'onboarding' })
+      console.log('[whatsapp-agent] enqueued onboarding wake')
+    }
+
+    if (!queuedKinds.has('self-review')) {
+      scheduler.enqueue({ at: Date.now() + scheduler.DAY_MS, kind: 'self-review' })
+      console.log('[whatsapp-agent] enqueued self-review wake')
+    }
+  }
+
+  resolveOwnerFromConfig()
+  bootstrapWakes()
+
   const deliver = (identity) => {
+    resolveOwnerFromInbound(identity)
     const agents = ctx.get('agents')
     const agent = agents && agents.get(runtime.agentSessionId)
     if (!agent) {
@@ -408,9 +600,28 @@ export async function apply(ctx, rawConfig = {}) {
     agent.followup(makeUserMessage(text, `WhatsApp message from ${chatLabel}`))
   }
 
+  // Wake ticker: pops due intents and hands each a structured wake prompt.
+  // Dumb by design — it decides WHEN to wake, never WHAT to do.
+  const tick = () => {
+    const nowTs = Date.now()
+    for (const intent of scheduler.due(nowTs)) {
+      scheduler.markFired(intent.id)
+      if (intent.kind === 'self-review') {
+        scheduler.enqueue({ at: nowTs + scheduler.DAY_MS, kind: 'self-review' })
+      }
+      const agents = ctx.get('agents')
+      const agent = agents && agents.get(runtime.agentSessionId)
+      if (!agent) {
+        console.error('[whatsapp-agent] agent not live; wake dropped', intent.kind, intent.id)
+        continue
+      }
+      agent.followup(makeUserMessage(buildWakePrompt(intent, store.getProfile()), `Scheduled wake: ${intent.kind}`))
+    }
+  }
+
   const inbound = createInbound({ ctx, config: runtime, hub, store, onMessage: deliver })
 
-  registerTools(ctx, { hub, store, outbox, config: runtime })
+  registerTools(ctx, { hub, store, outbox, config: runtime, scheduler })
 
   // Panel routes (same-origin; the client bundle fetches these).
   const webServer = ctx.get('webServer')
@@ -455,22 +666,33 @@ export async function apply(ctx, rawConfig = {}) {
         .slice(0, limit)
     }
 
-    const baseStatus = () => ({
-      ok: true,
-      agent: runtime.agentSessionId,
-      echoMode: isEcho(),
-      hubUrl: runtime.hubUrl,
-      apiKeySet: !!runtime.apiKey,
-      webhookSecretSet: !!runtime.webhookSecret,
-      webhookPath: runtime.webhookPath,
-      pollMs: runtime.pollMs,
-      seenMessages: Object.keys(store.snapshot().seen || {}).length,
-      chatsTracked: Object.keys(store.snapshot().chats || {}).length,
-      outboxPending: store.outboxEntries().filter(([, r]) => r.status === 'pending' || r.status === 'failed').length,
-      pending: store.pending(),
-      lessons: (store.snapshot().lessons || []).slice(-8),
-      outbox: outboxHistory(12),
-    })
+    const baseStatus = () => {
+      const profile = store.getProfile()
+      return {
+        ok: true,
+        agent: runtime.agentSessionId,
+        echoMode: isEcho(),
+        hubUrl: runtime.hubUrl,
+        apiKeySet: !!runtime.apiKey,
+        webhookSecretSet: !!runtime.webhookSecret,
+        webhookPath: runtime.webhookPath,
+        pollMs: runtime.pollMs,
+        seenMessages: Object.keys(store.snapshot().seen || {}).length,
+        chatsTracked: Object.keys(store.snapshot().chats || {}).length,
+        outboxPending: store.outboxEntries().filter(([, r]) => r.status === 'pending' || r.status === 'failed').length,
+        pending: store.pending(),
+        lessons: (store.snapshot().lessons || []).slice(-8),
+        profile: {
+          onboarding: (profile.state && profile.state.onboarding) || null,
+          onboardingStep: (profile.state && profile.state.onboardingStep) ?? null,
+          level: (profile.autonomy && profile.autonomy.level) || null,
+          ownerJid: (profile.identity && profile.identity.owner && profile.identity.owner.jid) || '',
+        },
+        proposals: store.listProposals(),
+        wake: scheduler.list(),
+        outbox: outboxHistory(12),
+      }
+    }
 
     webServer.register({ kind: 'exact', path: `${runtime.webhookPath}/status`, handler: async (_req, res) => {
       sendJson(res, 200, { ...baseStatus(), ...(await hubFacts()) })
@@ -528,6 +750,15 @@ export async function apply(ctx, rawConfig = {}) {
     disposers.push(inbound.registerWebhook(webServer))
     disposers.push(inbound.registerPoll(timer))
     return () => { for (const d of disposers) { try { d() } catch { /* ignore */ } } }
+  })
+
+  // Scheduler wake ticker (~30s). Degrades gracefully when `timer` is absent.
+  const WAKE_TICK_MS = 30_000
+  ctx.effect(() => {
+    const timer = ctx.get('timer')
+    if (!timer) return () => {}
+    const clear = timer.interval(() => { try { tick() } catch (err) { console.error('[whatsapp-agent] wake tick failed', err && err.message) } }, WAKE_TICK_MS)
+    return clear
   })
 
   // Bootstrap the dedicated agent (does not own its teardown; durable, resumed on restart).
