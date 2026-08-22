@@ -80,6 +80,7 @@ export interface MessageAnalytics {
     total: number;
     sent: number;
     received: number;
+    distinctChats: number;
     media: number;
     forwarded: number;
     starred: number;
@@ -378,14 +379,16 @@ export const messagesRepo = {
     const one = <T>(sql: string): T => db.prepare(sql).get(...bind) as T;
 
     const totals = one<{
-      total: number; sent: number; received: number; media: number; forwarded: number;
-      starred: number; deleted: number; edited: number; reactions: number; words: number;
+      total: number; sent: number; received: number; distinctChats: number;
+      media: number; forwarded: number; starred: number; deleted: number; edited: number;
+      reactions: number; words: number;
       activeDays: number; firstTs: number | null; lastTs: number | null;
     }>(`
       SELECT
         COUNT(*) as total,
         COALESCE(SUM(from_me), 0) as sent,
         COALESCE(SUM(CASE WHEN from_me = 0 THEN 1 ELSE 0 END), 0) as received,
+        COUNT(DISTINCT remote_jid) as distinctChats,
         COALESCE(SUM(has_media), 0) as media,
         COALESCE(SUM(is_forwarded), 0) as forwarded,
         COALESCE(SUM(is_starred), 0) as starred,
@@ -478,7 +481,9 @@ export const messagesRepo = {
     return {
       range: { days: opts.days ?? null, firstTs: totals.firstTs, lastTs: totals.lastTs },
       totals: {
-        total: totals.total, sent: totals.sent, received: totals.received, media: totals.media,
+        total: totals.total, sent: totals.sent, received: totals.received,
+        distinctChats: totals.distinctChats,
+        media: totals.media,
         forwarded: totals.forwarded, starred: totals.starred, deleted: totals.deleted,
         edited: totals.edited, reactions: totals.reactions, words: totals.words,
         activeDays: totals.activeDays,

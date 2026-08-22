@@ -249,6 +249,8 @@ describe('messagesRepo', () => {
       expect(a.totals.total).toBe(4);
       expect(a.totals.sent).toBe(1);
       expect(a.totals.received).toBe(3);
+      // All four fixtures share the default chat jid.
+      expect(a.totals.distinctChats).toBe(1);
       expect(a.totals.media).toBe(1);
       expect(a.totals.forwarded).toBe(1);
       // "hello world"(2) + "one two three"(3) + "x"(1) = 6
@@ -268,6 +270,7 @@ describe('messagesRepo', () => {
 
       const a = messagesRepo.getAnalytics({ chat: jid });
       expect(a.totals.total).toBe(1);
+      expect(a.totals.distinctChats).toBe(1);
       expect(a.byChat.length).toBe(1);
       expect(a.byChat[0].remote_jid).toBe(jid);
     });

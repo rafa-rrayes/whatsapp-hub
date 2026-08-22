@@ -1,0 +1,34 @@
+# Optional, ADDITIVE agent preset for the dedicated WhatsApp agent.
+#
+# The bridge plugin (@rafa/dsh-whatsapp-agent) is self-contained: it injects the
+# reliability "Operating Contract" and the situational briefing directly into
+# the agent's setup, so you do NOT need a preset at all. The `wa_*` tools are
+# registered on the host plane and are available to every agent.
+#
+# Use this file only if you want to ATTACH extra host capabilities to the agent
+# (long-term memory, todo, skills, etc.). To do so:
+#   1. copy this file to a preset directory under ~/.dsh/.agent-presets/<id>/agent.cordis.yml
+#   2. set the plugin config `agentPreset` to that id
+#   3. add the rows you want below
+#
+# NOTE: do NOT put the operating contract here as a `persona` row — the bridge
+# already injects it, and a second copy would duplicate it. Keep persona rows
+# short (identity only), or omit them.
+
+- id: persona
+  name: '@deepseek-ai/dsh-persona'
+  config:
+    text: >-
+      You are the WhatsApp agent for this DeepSeek Harness deployment. Your
+      working directory is {{cwd}}.
+
+# Example additions (uncomment and adjust to what your deployment provides):
+#
+# - id: tool-todo
+#   name: '@deepseek-ai/dsh-tool-todo'
+#
+# - id: tool-skill
+#   name: '@deepseek-ai/dsh-tool-skill'
+#
+# If your deployment mounts a long-term memory plugin (e.g. a `memory-evolve`-
+# style package), add its row here so the agent's global memory outlives chats.

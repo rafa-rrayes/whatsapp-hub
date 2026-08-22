@@ -1,0 +1,31 @@
+{
+  "name": "@rafa/dsh-whatsapp-agent",
+  "version": "0.1.0",
+  "description": "DeepSeek Harness ⇄ WhatsApp seam: a reliable, persistent agent over whatsapp-hub.",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "client": {
+      "platform": "web",
+      "inject": ["@deepseek-ai/dsh-client-runtime"],
+      "immediately": false
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "license": "MIT",
+  "keywords": [
+    "deepseek-harness",
+    "whatsapp",
+    "whatsapp-hub",
+    "agent",
+    "cordis",
+    "baileys"
+  ]
+}

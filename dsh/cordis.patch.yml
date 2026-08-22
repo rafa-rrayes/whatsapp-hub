@@ -1,0 +1,24 @@
+# @rafa/dsh-whatsapp-agent bundle patch: inserts the host row into the profile's
+# plugin roster. The browser half rides the package's `dsh.client` manifest
+# (the client registry serves lib/client.js); this row materializes the host
+# plugin (tools + webhook + panel routes + dedicated agent) on boot.
+#
+# Install with:  dsh plugin --profile <name> add <path-or-git-url>
+# The bundle patch is applied automatically once the dependency resolves to a
+# package declaring `dsh.bundle.patch` — do NOT insert this row again in the
+# profile's own cordis.patch.yml (duplicate ids crash the loader).
+- insert:
+    - id: whatsapp-agent
+      name: '@rafa/dsh-whatsapp-agent'
+      config:
+        hubUrl: 'https://zapzaphub.rrayes.com.br'
+        # Never commit a real API key: set it in the profile's own
+        # cordis.patch.yml (applied after this bundle layer) or live in
+        # Settings → WhatsApp Agent. Empty key = echoMode (dry-run tools).
+        apiKey: ''
+        webhookSecret: ''
+        webhookPath: '/whatsapp/webhook'
+        agentSessionId: 'whatsapp-agent'
+        pollMs: 60000
+        stateFile: '.whatsapp-agent-state.json'
+        echoMode: false
