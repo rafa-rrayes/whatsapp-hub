@@ -490,6 +490,23 @@ async function ensureAgent(ctx, config, store) {
   if (config.model) agentOptions.model = config.model
   if (config.provider) agentOptions.provider = config.provider
 
+  // Agents created without an explicit model or cwd fail prompt assembly: the
+  // deployment persona interpolates {{model}} (options.model) and {{cwd}}
+  // (session.header.cwd), and an absent value throws rather than shipping a
+  // malformed prompt. Resolve the deployment default model and a real cwd.
+  if (!agentOptions.model) {
+    const dm = ctx.get('agentDefaultModel')
+    const sel = dm && typeof dm.currentSelection === 'function' ? dm.currentSelection() : null
+    if (sel && sel.model) {
+      agentOptions.model = sel.model
+      if (sel.provider && !agentOptions.provider) agentOptions.provider = sel.provider
+    }
+    // Last-resort fallback so prompt assembly never trips on {{model}}.
+    if (!agentOptions.model) agentOptions.model = 'deepseek-v4-flash'
+    if (!agentOptions.provider) agentOptions.provider = 'deepseek-official'
+  }
+  const meta = { cwd: process.cwd(), ...(config.agentPreset ? { agentPreset: config.agentPreset } : {}) }
+
   const persistence = ctx.get('sessionPersistence')
   let persisted = false
   if (persistence) {
@@ -506,7 +523,7 @@ async function ensureAgent(ctx, config, store) {
     } else {
       await agents.create({
         sessionId: config.agentSessionId,
-        meta: config.agentPreset ? { agentPreset: config.agentPreset } : {},
+        meta,
         agentOptions,
         setup,
       })
