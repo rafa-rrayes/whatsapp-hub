@@ -571,9 +571,20 @@ export async function apply(ctx, rawConfig = {}) {
 
   // ── wake bootstrap (onboarding + periodic self-review) ───────────────────
   function bootstrapWakes() {
-    // Onboarding needs a known owner to DM; if none is configured and no one
-    // has messaged yet, it is enqueued later from the owner-resolution paths.
-    if (ownerSet()) enqueueOnboarding()
+    // Onboarding needs a known owner to DM. If none is configured and no one
+    // has messaged yet, cancel any stale queued onboarding intent (e.g. one
+    // persisted by an earlier boot) — it can only fire meaningfully once the
+    // owner is resolved, at which point enqueueOnboarding() runs again.
+    if (ownerSet()) {
+      enqueueOnboarding()
+    } else {
+      for (const e of scheduler.list()) {
+        if (e.kind === 'onboarding' && e.status === 'queued') {
+          scheduler.cancel(e.id)
+          console.log('[whatsapp-agent] cancelled stale onboarding wake (no owner yet)')
+        }
+      }
+    }
     if (!scheduler.list().some((e) => e.status === 'queued' && e.kind === 'self-review')) {
       scheduler.enqueue({ at: Date.now() + scheduler.DAY_MS, kind: 'self-review' })
       console.log('[whatsapp-agent] enqueued self-review wake')
