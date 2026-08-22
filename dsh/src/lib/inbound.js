@@ -82,12 +82,33 @@ function extractIdentity(event) {
 export function createInbound({ ctx, config, hub, store, onMessage }) {
   let firstPoll = true
 
+  const channel = () => (config && config.controlChannel) || ''
+  const tag = () => (config && config.botTag) || 'BOT:'
+
+  /**
+   * In same-account mode, every message in the control channel (the solo "DSH"
+   * group / self-chat) is `from_me`. The agent's own sends carry the bot tag;
+   * anything else in that channel is an owner command.
+   */
+  function isOwnerCommand(jid, preview) {
+    const chan = channel()
+    if (!chan || !jid || jid !== chan) return false
+    const t = tag()
+    const p = String(preview || '')
+    return !(t && p.startsWith(t))
+  }
+
   function deliver(identity) {
-    if (!identity || !identity.id) return
-    if (identity.fromMe) return // our own sends are not inbound instructions
-    if (store.seen(identity.id)) return
+    if (!identity || !identity.id) return false
+    if (identity.fromMe) {
+      // Our own sends are not inbound instructions — except owner commands in
+      // the control channel, which lack the bot tag.
+      if (!isOwnerCommand(identity.jid, identity.preview)) return false
+    }
+    if (store.seen(identity.id)) return false
     store.markSeen(identity.id)
     onMessage(identity)
+    return true
   }
 
   // ── webhook ──────────────────────────────────────────────────────────────
@@ -113,10 +134,7 @@ export function createInbound({ ctx, config, hub, store, onMessage }) {
         }
         let count = 0
         for (const identity of extractIdentity(event)) {
-          if (identity.fromMe) continue
-          if (store.seen(identity.id)) continue
-          deliver(identity)
-          count++
+          if (deliver(identity)) count++
         }
         res.writeHead(200, { 'content-type': 'application/json' })
         res.end(JSON.stringify({ ok: true, delivered: count }))
@@ -143,28 +161,25 @@ export function createInbound({ ctx, config, hub, store, onMessage }) {
       const list = Array.isArray(res.data) ? res.data : (res.data && res.data.data) || []
       if (firstPoll) {
         // Seed the seen-set from current history without delivering, so a
-        // restart never replays old traffic.
+        // restart never replays old traffic (including prior owner commands).
         for (const m of list) {
           const id = m && (m.id || (m.key && m.key.id))
-          if (id && !(m.from_me === true || m.fromMe === true)) store.markSeen(id)
+          if (id) store.markSeen(id)
         }
         firstPoll = false
         return
       }
       for (const m of list) {
         const id = m && (m.id || (m.key && m.key.id))
-        const fromMe = m && (m.from_me === true || m.fromMe === true)
-        if (!id || fromMe) continue
-        if (!store.seen(id)) {
-          deliver({
-            id,
-            jid: m.chat || m.jid || m.remote_jid || (m.key && m.key.remoteJid) || null,
-            fromMe: false,
-            pushName: m.push_name || m.pushName || '',
-            timestamp: (m.timestamp || m.ts || Date.now()),
-            preview: m.body || m.text || '',
-          })
-        }
+        if (!id) continue
+        deliver({
+          id,
+          jid: m.chat || m.jid || m.remote_jid || (m.key && m.key.remoteJid) || null,
+          fromMe: m.from_me === true || m.fromMe === true,
+          pushName: m.push_name || m.pushName || '',
+          timestamp: (m.timestamp || m.ts || Date.now()),
+          preview: m.body || m.text || '',
+        })
       }
     } catch (err) {
       console.error('[whatsapp-agent] reconcile failed', err && err.message)

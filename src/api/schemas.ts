@@ -118,6 +118,13 @@ export const groupParticipantsSchema = z.object({
   action: z.enum(['add', 'remove', 'promote', 'demote']),
 });
 
+export const groupCreateSchema = z.object({
+  subject: z.string().min(1, 'subject is required').max(100, 'subject must be under 100 characters'),
+  participants: z.array(
+    z.string().regex(JID_REGEX, 'Invalid participant JID format')
+  ).max(256, 'too many participants').optional().default([]),
+});
+
 // Sync older chat history for a chat
 export const syncHistorySchema = z.object({
   count: z.number().int().min(1).max(500).optional(),

@@ -4,7 +4,7 @@ import { chatsRepo } from '../../database/repositories/chats.js';
 import { connectionManager } from '../../connection/manager.js';
 import { isValidJid } from '../../utils/security.js';
 import { validate } from '../middleware/validate.js';
-import { groupSubjectSchema, groupDescriptionSchema, groupParticipantsSchema } from '../schemas.js';
+import { groupSubjectSchema, groupDescriptionSchema, groupParticipantsSchema, groupCreateSchema } from '../schemas.js';
 import { asyncHandler, NotFoundError, BadRequestError } from '../errors.js';
 import { toApiGroup } from '../../types/mappers.js';
 
@@ -14,6 +14,13 @@ const router = Router();
 router.get('/', asyncHandler(async (req, res) => {
   const groups = groupsRepo.getAll(req.query.search as string);
   res.json({ data: groups.map(toApiGroup), total: groups.length });
+}));
+
+// POST /api/groups/create — create a new group (empty participants = solo group)
+router.post('/create', validate(groupCreateSchema), asyncHandler(async (req, res) => {
+  const { subject, participants } = req.body;
+  const metadata = await connectionManager.groupCreate(subject, participants || []);
+  res.json({ success: true, group: metadata });
 }));
 
 // GET /api/groups/:jid — single group with participants

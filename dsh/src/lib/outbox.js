@@ -32,10 +32,27 @@ function hashString(s) {
 }
 
 /**
- * @param {{hub:object, store:object, echoMode?:boolean|(() => boolean)}} deps
+ * @param {{hub:object, store:object, echoMode?:boolean|(() => boolean), controlChannel?:string|(() => string), botTag?:string|(() => string)}} deps
  */
-export function createOutbox({ hub, store, echoMode }) {
+export function createOutbox({ hub, store, echoMode, controlChannel, botTag }) {
   const echo = () => (typeof echoMode === 'function' ? echoMode() : !!echoMode)
+  const channel = () => (typeof controlChannel === 'function' ? controlChannel() : controlChannel)
+  const tag = () => (typeof botTag === 'function' ? botTag() : botTag)
+
+  /**
+   * Tag the agent's own messages in the control channel (the solo "DSH" group
+   * or self-chat). In same-account mode every message there is `from_me`, so the
+   * tag is how the owner tells the agent's messages from their own, and how the
+   * inbound side ignores the agent's sends (anti-loop).
+   */
+  function decorateControlChannel(jid, kind, payload) {
+    if (kind !== 'text' || !payload || typeof payload.text !== 'string') return payload
+    const chan = channel()
+    const t = tag()
+    if (!chan || !t || jid !== chan) return payload
+    if (payload.text.startsWith(t)) return payload
+    return { ...payload, text: `${t} ${payload.text}` }
+  }
 
   function bucketKey(key, now) {
     return `${key}#${Math.floor(now / IDEMPOTENCY_WINDOW_MS)}`
@@ -43,6 +60,7 @@ export function createOutbox({ hub, store, echoMode }) {
 
   async function send({ jid, kind, payload }) {
     if (!jid) return { ok: false, error: 'recipient jid required' }
+    payload = decorateControlChannel(jid, kind, payload)
     const now = NOW()
     const baseKey = contentKey(jid, kind, payload)
     const key = bucketKey(baseKey, now)

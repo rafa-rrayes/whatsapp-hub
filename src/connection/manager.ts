@@ -486,6 +486,11 @@ class ConnectionManager {
     await sock.groupUpdateSubject(jid, subject);
   }
 
+  async groupCreate(subject: string, participants: string[]): Promise<any> {
+    const sock = this.requireSocket();
+    return sock.groupCreate(subject, participants);
+  }
+
   async groupUpdateDescription(jid: string, description: string): Promise<void> {
     const sock = this.requireSocket();
     await sock.groupUpdateDescription(jid, description);

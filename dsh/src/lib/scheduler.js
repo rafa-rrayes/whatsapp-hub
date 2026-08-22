@@ -118,7 +118,7 @@ export function createScheduler({ store, now = NOW }) {
 // ── wake prompts ────────────────────────────────────────────────────────────
 
 export const ONBOARDING_AGENDA = [
-  'Owner onboarding interview (7 steps; 1-2 short messages each, in the owner DM):',
+  'Owner onboarding interview (7 steps; 1-2 short messages each, sent to the control channel — the solo DSH group / self-chat):',
   '1. Who I am — agent name, role, the owner\'s name / language / timezone.',
   '2. Mission — a one-line brief plus priorities for what you exist to do.',
   '3. How I act — tone, brevity, language, anything about the owner\'s voice.',
@@ -133,22 +133,25 @@ export const ONBOARDING_AGENDA = [
  * + args and tells the agent to read the Profile and decide (decideAction
  * semantics) what to actually do. The ticker never decides itself.
  */
-export function buildWakePrompt(intent, profile = null) {
+export function buildWakePrompt(intent, profile = null, controlChannel = null) {
   const kind = intent.kind || 'wake'
   const args = intent.args || {}
   const lines = [`Scheduled wake (host-initiated). Kind: ${kind}.`]
 
   if (kind === 'onboarding') {
     const step = (profile && profile.state && profile.state.onboardingStep) ?? null
+    const where = controlChannel
+      ? `Send your messages to the control channel (${controlChannel}) — your outbound text there is automatically tagged, so just write normally.`
+      : 'Send your messages to the control channel (the solo DSH group / self-chat).'
     lines.push(step == null
-      ? 'Owner onboarding has not started. DM the owner and begin the interview below.'
-      : `Onboarding is in progress. Resume at step ${step} of the interview below (pick up where the interrupted chat left off).`)
+      ? `Owner onboarding has not started. ${where} Begin the interview below.`
+      : `Onboarding is in progress. Resume at step ${step} of the interview below (pick up where the interrupted chat left off). ${where}`)
     lines.push('')
     lines.push(ONBOARDING_AGENDA)
     lines.push('')
-    lines.push('Persist each answer as you go: fast facts via wa_remember; owner-gated fields (identity, mission, tone, boundaries, autonomy, schedule) via wa_propose_rule (the owner approves via wa_approve_rule). Advance profile.state.onboardingStep with wa_set_profile after each step. Only on the owner\'s explicit confirmation of the final restatement, set profile.state.onboarding to "done" via wa_set_profile.')
+    lines.push('Persist each answer as you go: fast facts via wa_remember; owner-gated fields (identity, mission, tone, boundaries, autonomy, schedule) via wa_propose_rule (the owner approves via wa_approve_rule). Surface each proposal to the owner in the control channel so they can approve or edit it. Advance profile.state.onboardingStep with wa_set_profile after each step. Only on the owner\'s explicit confirmation of the final restatement, set profile.state.onboarding to "done" via wa_set_profile.')
   } else if (kind === 'self-review') {
-    lines.push('Periodic self-review. (1) Dedupe and refine your lessons (wa_record_lesson already persists them). (2) Surface any unresolved contradictions to the owner. (3) If your behaviour shows a recurring pattern the owner always approves, propose a Profile rule change with wa_propose_rule. Do NOT auto-commit any gated change — proposals only.')
+    lines.push('Periodic self-review. (1) Dedupe and refine your lessons (wa_record_lesson already persists them). (2) Surface any unresolved contradictions to the owner in the control channel. (3) If your behaviour shows a recurring pattern the owner always approves, propose a Profile rule change with wa_propose_rule. Do NOT auto-commit any gated change — proposals only.')
   } else {
     if (args && Object.keys(args).length) lines.push(`Details: ${JSON.stringify(args)}`)
     lines.push('A time-based wake fired. Read the Profile (wa_get_profile) and the briefing, then decide what (if anything) to do.')

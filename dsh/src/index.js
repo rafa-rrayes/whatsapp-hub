@@ -44,6 +44,13 @@ const DEFAULTS = {
   stateFile: '.whatsapp-agent-state.json',
   echoMode: false,
   ownerJid: '',
+  // The control channel is where the owner talks to the agent — a solo "DSH"
+  // group or the self-chat. In same-account mode every message there is from_me,
+  // so the agent's own sends are tagged with botTag and anything untagged is an
+  // owner command. When empty, the plugin tries to auto-create the group.
+  controlChannel: '',
+  controlChannelSubject: 'DSH',
+  botTag: 'BOT:',
 }
 
 function resolveConfig(raw = {}) {
@@ -530,15 +537,21 @@ export async function apply(ctx, rawConfig = {}) {
   const store = createMemoryStore(await makePersistence(config))
   await store.init()
   const scheduler = createScheduler({ store })
-  const outbox = createOutbox({ hub, store, echoMode: () => runtime.echoMode === true || !runtime.apiKey })
+  const outbox = createOutbox({
+    hub,
+    store,
+    echoMode: () => runtime.echoMode === true || !runtime.apiKey,
+    controlChannel: () => runtime.controlChannel,
+    botTag: () => runtime.botTag,
+  })
 
-  // ── owner resolution ─────────────────────────────────────────────────────
-  // The owner is who the agent DMs for onboarding, escalations, and approvals.
-  // Prefer the config `ownerJid`; otherwise the first inbound non-group sender
-  // becomes the owner and is persisted to the Profile.
-  function ownerSet() {
-    const p = store.getProfile()
-    return !!(p.identity && p.identity.owner && p.identity.owner.jid)
+  // ── control channel (owner → agent) ──────────────────────────────────────
+  // The owner talks to the agent through the control channel: a solo "DSH"
+  // group or the self-chat. In same-account mode every message there is
+  // from_me, so the agent's own sends are tagged (botTag) and untagged messages
+  // are owner commands (see inbound.js).
+  function channelSet() {
+    return !!(runtime.controlChannel && String(runtime.controlChannel).trim())
   }
   function enqueueOnboarding() {
     const profile = store.getProfile()
@@ -553,35 +566,50 @@ export async function apply(ctx, rawConfig = {}) {
     scheduler.enqueue({ at: Date.now(), kind: 'onboarding' })
     console.log('[whatsapp-agent] enqueued onboarding wake')
   }
-  function resolveOwnerFromConfig() {
-    if (ownerSet()) return
-    const jid = normalizeJid(runtime.ownerJid)
-    if (!jid) return
-    store.setProfile({ identity: { owner: { jid } } })
-    console.log(`[whatsapp-agent] owner set from config: ${jid}`)
-    enqueueOnboarding()
-  }
-  function resolveOwnerFromInbound(identity) {
-    if (ownerSet() || !identity || !identity.jid) return
-    if (identity.jid.includes('@g.us') || identity.jid.includes('@broadcast')) return
-    store.setProfile({ identity: { owner: { jid: identity.jid, name: identity.pushName || 'Owner' } } })
-    console.log(`[whatsapp-agent] owner set from first inbound sender: ${identity.jid}`)
-    enqueueOnboarding()
+  async function ensureControlChannel() {
+    if (channelSet()) return
+    // Restore a channel resolved by a previous boot (persisted in the profile).
+    const persisted = store.getProfile().state && store.getProfile().state.controlChannel
+    if (persisted) {
+      runtime.controlChannel = persisted
+      console.log(`[whatsapp-agent] control channel restored: ${persisted}`)
+      return
+    }
+    const selfJid = runtime.ownerJid ? normalizeJid(runtime.ownerJid) : null
+    if (selfJid && !store.getProfile().identity.owner.jid) {
+      store.setProfile({ identity: { owner: { jid: selfJid } } })
+    }
+    let chosen = null
+    // Prefer auto-creating the solo "DSH" group (the requested channel).
+    if (!(runtime.echoMode === true || !runtime.apiKey)) {
+      try {
+        const r = await hub.createGroup(runtime.controlChannelSubject || 'DSH', [])
+        const meta = r && r.ok && r.data && r.data.group
+        const gid = meta && (meta.id || meta.gid)
+        if (gid) chosen = gid
+        else console.warn('[whatsapp-agent] group create returned no id; falling back to self-chat')
+      } catch (err) {
+        console.warn('[whatsapp-agent] group create failed (hub may not support it); falling back to self-chat', err && err.message)
+      }
+    }
+    // Fall back to the self-chat (same-account) so onboarding still has a channel.
+    if (!chosen && selfJid) chosen = selfJid
+    if (chosen) {
+      runtime.controlChannel = chosen
+      store.setProfile({ state: { controlChannel: chosen } })
+      console.log(`[whatsapp-agent] control channel = ${chosen}`)
+    }
   }
 
   // ── wake bootstrap (onboarding + periodic self-review) ───────────────────
   function bootstrapWakes() {
-    // Onboarding needs a known owner to DM. If none is configured and no one
-    // has messaged yet, cancel any stale queued onboarding intent (e.g. one
-    // persisted by an earlier boot) — it can only fire meaningfully once the
-    // owner is resolved, at which point enqueueOnboarding() runs again.
-    if (ownerSet()) {
+    if (channelSet()) {
       enqueueOnboarding()
     } else {
       for (const e of scheduler.list()) {
         if (e.kind === 'onboarding' && e.status === 'queued') {
           scheduler.cancel(e.id)
-          console.log('[whatsapp-agent] cancelled stale onboarding wake (no owner yet)')
+          console.log('[whatsapp-agent] cancelled stale onboarding wake (no control channel)')
         }
       }
     }
@@ -591,11 +619,10 @@ export async function apply(ctx, rawConfig = {}) {
     }
   }
 
-  resolveOwnerFromConfig()
+  await ensureControlChannel()
   bootstrapWakes()
 
   const deliver = (identity) => {
-    resolveOwnerFromInbound(identity)
     const agents = ctx.get('agents')
     const agent = agents && agents.get(runtime.agentSessionId)
     if (!agent) {
@@ -603,8 +630,9 @@ export async function apply(ctx, rawConfig = {}) {
       return
     }
     const chatLabel = identity.jid || identity.participant || 'unknown'
+    const isOwner = !!(channelSet() && identity.jid === runtime.controlChannel)
     const text = [
-      'New WhatsApp message.',
+      isOwner ? 'Owner message (control channel).' : 'New WhatsApp message.',
       `Chat: ${chatLabel}`,
       identity.pushName ? `From: ${identity.pushName}` : '',
       identity.preview ? `Preview: ${identity.preview}` : '',
@@ -612,7 +640,7 @@ export async function apply(ctx, rawConfig = {}) {
       '',
       'Read the full message and its recent context with wa_recent_activity or wa_get_conversation before replying.',
     ].filter(Boolean).join('\n')
-    agent.followup(makeUserMessage(text, `WhatsApp message from ${chatLabel}`))
+    agent.followup(makeUserMessage(text, isOwner ? 'Owner message' : `WhatsApp message from ${chatLabel}`))
   }
 
   // Wake ticker: pops due intents and hands each a structured wake prompt.
@@ -630,7 +658,7 @@ export async function apply(ctx, rawConfig = {}) {
         console.error('[whatsapp-agent] agent not live; wake dropped', intent.kind, intent.id)
         continue
       }
-      agent.followup(makeUserMessage(buildWakePrompt(intent, store.getProfile()), `Scheduled wake: ${intent.kind}`))
+      agent.followup(makeUserMessage(buildWakePrompt(intent, store.getProfile(), runtime.controlChannel), `Scheduled wake: ${intent.kind}`))
     }
   }
 

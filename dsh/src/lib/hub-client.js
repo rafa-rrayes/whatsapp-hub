@@ -127,6 +127,8 @@ export function createHubClient(config) {
     post('/api/actions/react', { jid, message_id: messageId, emoji })
   const markRead = (jid, messageIds) =>
     post('/api/actions/read', { jid, message_ids: messageIds })
+  const createGroup = (subject, participants = []) =>
+    post('/api/groups/create', { subject, participants })
 
   /**
    * Fuzzy-resolve a name/phone/JID to ranked chat candidates. Faithful to the
@@ -204,5 +206,6 @@ export function createHubClient(config) {
     sendText,
     react,
     markRead,
+    createGroup,
   }
 }
