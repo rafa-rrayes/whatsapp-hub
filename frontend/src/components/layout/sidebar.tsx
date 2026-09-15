@@ -27,6 +27,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 
 const navItems = [
   { to: "/", icon: LayoutDashboard, label: "Overview" },
+  { to: "/connect", icon: Plug, label: "Connect AI" },
   { to: "/messages", icon: MessageSquare, label: "Messages" },
   { to: "/contacts", icon: Users, label: "Contacts" },
   { to: "/groups", icon: UsersRound, label: "Groups" },
@@ -37,7 +38,6 @@ const navItems = [
   { to: "/connection", icon: Wifi, label: "Connection" },
   { to: "/settings", icon: Settings, label: "Settings" },
   { to: "/api-docs", icon: BookOpen, label: "API Docs" },
-  { to: "/mcp", icon: Plug, label: "MCP" },
 ]
 
 interface SidebarProps {

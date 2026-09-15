@@ -393,7 +393,7 @@ window.__ModuleLoader__.load({
           metrics.map(function (m) { return React.createElement(Metric, { key: m.label, label: m.label, value: m.value }) }),
         ),
         React.createElement(Card, { title: 'Configuration', note: 'Secrets left blank keep their current value.', index: 2 },
-          React.createElement(Field, { label: 'Hub URL', value: cfg.hubUrl, placeholder: 'https://zapzaphub.rrayes.com.br', onChange: function (v) { setCfg(Object.assign({}, cfg, { hubUrl: v })) } }),
+          React.createElement(Field, { label: 'Hub URL', value: cfg.hubUrl, placeholder: 'http://127.0.0.1:3100', onChange: function (v) { setCfg(Object.assign({}, cfg, { hubUrl: v })) } }),
           React.createElement(Field, { label: 'API key', type: 'password', placeholder: 'unchanged', value: cfg.apiKey, onChange: function (v) { setCfg(Object.assign({}, cfg, { apiKey: v })) } }),
           React.createElement(Field, { label: 'Webhook secret', type: 'password', placeholder: 'unchanged', value: cfg.webhookSecret, onChange: function (v) { setCfg(Object.assign({}, cfg, { webhookSecret: v })) } }),
           React.createElement(Field, { label: 'Reconcile poll (ms, 0 = off)', type: 'number', value: String(cfg.pollMs), helper: 'Reconciliation polling interval for at-least-once inbound delivery.', onChange: function (v) { setCfg(Object.assign({}, cfg, { pollMs: v })) } }),

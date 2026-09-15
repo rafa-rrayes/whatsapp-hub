@@ -28,6 +28,7 @@ import { registerMcp } from '../mcp/index.js';
 import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js';
 import { provider, preAuthClient } from '../mcp/oauth/provider.js';
 import { createConsentRouter } from '../mcp/oauth/consent.js';
+import { createMcpSetupRouter } from './routes/mcp-setup.js';
 
 /**
  * Returns true if `origin` is a loopback or RFC-1918 private address on the given port.
@@ -183,6 +184,7 @@ export function createServer() {
   // resolve. preAuthClient runs FIRST on /token and /revoke and verifies the
   // client_secret against the stored SHA-256 hash; the SDK's getClient() then
   // returns client_secret: undefined and the SDK's plaintext compare is a no-op.
+  let oauthMounted = false;
   try {
     app.use('/token', preAuthClient);
     app.use('/revoke', preAuthClient);
@@ -195,6 +197,7 @@ export function createServer() {
       resourceName: 'WhatsApp Hub MCP',
     }));
     app.use('/oauth', createConsentRouter());
+    oauthMounted = true;
   } catch (err) {
     // mcpAuthRouter throws synchronously on HTTPS-issuer violation.
     // config.ts already pushed an error in this case — re-log so the startup
@@ -242,6 +245,10 @@ export function createServer() {
 
   // Deprecation headers on unversioned /api access
   app.use('/api', deprecationMiddleware);
+
+  const mcpSetupRouter = createMcpSetupRouter(oauthMounted);
+  app.use('/api/mcp', mcpSetupRouter);
+  app.use('/api/v1/mcp', mcpSetupRouter);
 
   // Stricter rate limit on action endpoints (message sending, connection management)
   const actionLimiter = rateLimit({

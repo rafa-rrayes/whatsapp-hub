@@ -54,7 +54,7 @@ only node builtins + relative files, and the client half is pre-built to
    bundle layer — no manual composition edit):
 
    ```bash
-   dsh plugin --profile web add /Users/Rafa/Code/Misc/whatsapp-hub/dsh
+   dsh plugin --profile web add /path/to/whatsapp-hub/dsh
    ```
 
    (`dsh plugin` forwards to `pnpm add` in the profile dir, then reconciles

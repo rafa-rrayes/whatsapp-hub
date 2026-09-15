@@ -1,429 +1,148 @@
-import { Card, CardContent } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
+import { useEffect, useRef, useState } from "react"
+import { useQuery } from "@tanstack/react-query"
+import { ArrowRight, Check, CircleHelp, Eye, EyeOff, KeyRound, Loader2, Plug, RefreshCw, ShieldCheck, Terminal, Wifi } from "lucide-react"
+import { api } from "@/lib/api"
+import { useAuthStore } from "@/stores/auth"
+import { Button } from "@/components/ui/button"
+import { Skeleton } from "@/components/ui/skeleton"
 import { ExportMarkdownMenu } from "@/components/export-md-menu"
-import { Plug, Lock, Compass, Search, BarChart3, Send } from "lucide-react"
-import type { LucideIcon } from "lucide-react"
-import {
-  type Endpoint,
-  MethodBadge,
-  CodeBlock,
-  EndpointCard,
-} from "@/components/api-docs/endpoint"
+import { CopyAction } from "@/components/mcp/copy-action"
+import { ToolCatalog } from "@/components/mcp/tool-catalog"
+import { buildAgentGuide, buildAgentPrompt, buildClientConfig, checkMcpConnection, toolAccess, type AuthMode, type ConnectionCheck, type McpSetup } from "@/lib/mcp-connect"
 
-// ---------------------------------------------------------------------------
-// Data — the tools exposed by the MCP server (src/mcp/tools/*).
-// ---------------------------------------------------------------------------
+const MASKED_KEY = "[API key hidden — Copy prompt includes your actual key]"
 
-interface ToolGroup {
-  id: string
-  title: string
-  description: string
-  icon: LucideIcon
-  tools: Endpoint[]
-}
+function ConnectionTest() {
+  const apiKey = useAuthStore(s => s.apiKey)
+  const [state, setState] = useState<{ pending: boolean; result?: ConnectionCheck; error?: string }>({ pending: false })
+  const controller = useRef<AbortController | null>(null)
+  useEffect(() => () => controller.current?.abort(), [])
 
-const TOOL_GROUPS: ToolGroup[] = [
-  {
-    id: "orientation",
-    title: "Orientation",
-    description: "Get your bearings and turn human-friendly names into JIDs before drilling in.",
-    icon: Compass,
-    tools: [
-      {
-        method: "TOOL",
-        path: "whatsapp_overview",
-        description:
-          "High-level dashboard: totals across chats, contacts, groups, and messages, plus recent activity and the most active chats. Call this first to orient yourself before drilling in.",
-        params: [
-          { name: "days", type: "number", description: "Window size in days for recent stats (max 90)", default: "7" },
-        ],
-      },
-      {
-        method: "TOOL",
-        path: "resolve_contact",
-        description:
-          "Fuzzy lookup mapping a free-text query (name, partial name, phone number, or JID) to a ranked list of contacts, groups, and chats. Translate a reference like \"Mom\" into a JID before calling tools that require one.",
-        params: [
-          { name: "query", type: "string", required: true, description: "Name, partial name, phone number, or JID to look up" },
-          { name: "limit", type: "number", description: "Max candidates to return (max 30)", default: "10" },
-          { name: "groups_only", type: "boolean", description: "Only consider group chats", default: "false" },
-          { name: "dms_only", type: "boolean", description: "Only consider 1:1 (DM) chats", default: "false" },
-        ],
-      },
-      {
-        method: "TOOL",
-        path: "list_chats",
-        description:
-          "Browse chats with optional filters (unread-only, groups/DMs, name substring, active within N days), sorted by most recent activity.",
-        params: [
-          { name: "unread_only", type: "boolean", description: "Only chats with unread_count > 0", default: "false" },
-          { name: "groups_only", type: "boolean", description: "Only group chats", default: "false" },
-          { name: "dms_only", type: "boolean", description: "Only 1:1 (DM) chats", default: "false" },
-          { name: "name_contains", type: "string", description: "Case-insensitive substring filter on the chat name or JID" },
-          { name: "active_since_days", type: "number", description: "Only chats whose last message is within the last N days (max 365)" },
-          { name: "limit", type: "number", description: "Max chats to return (max 200)", default: "30" },
-        ],
-      },
-    ],
-  },
-  {
-    id: "search",
-    title: "Search & retrieval",
-    description: "Find specific content and pull the surrounding context as markdown.",
-    icon: Search,
-    tools: [
-      {
-        method: "TOOL",
-        path: "search_messages",
-        description:
-          "Full-text search across the message archive. Returns snippets (not full bodies) so you can scan many hits cheaply. Narrow by chat, sender, time range, or message type.",
-        params: [
-          { name: "query", type: "string", required: true, description: "Free-text search term, matched against message bodies" },
-          { name: "chat", type: "string", description: "Name or JID to restrict the search to a single chat" },
-          { name: "from", type: "string", description: "Sender name or JID to restrict to a single sender" },
-          { name: "after", type: "string", description: "ISO 8601 or unix timestamp. Lower bound, exclusive" },
-          { name: "before", type: "string", description: "ISO 8601 or unix timestamp. Upper bound, exclusive" },
-          { name: "types", type: "string[]", description: "Message types to include (e.g. [\"text\",\"image\"]). Omit for all" },
-          { name: "limit", type: "number", description: "Max results (max 100)", default: "20" },
-        ],
-      },
-      {
-        method: "TOOL",
-        path: "recent_activity",
-        description:
-          "Summarize activity over a flexible time window. Modes: summary (per-chat aggregates), firehose (chronological message list), rendered (markdown per chat).",
-        params: [
-          { name: "window", type: "string", description: "Named window: today, yesterday, past_hour, past_24h, past_week. Overridden by since/until", default: "past_24h" },
-          { name: "since", type: "string", description: "ISO 8601 or unix timestamp; overrides window if set" },
-          { name: "until", type: "string", description: "ISO 8601 or unix timestamp; defaults to now" },
-          { name: "chats", type: "string[]", description: "Names or JIDs to include. If set, only these chats are considered" },
-          { name: "exclude_chats", type: "string[]", description: "Names or JIDs to exclude from results" },
-          { name: "groups_only", type: "boolean", description: "Only group chats", default: "false" },
-          { name: "dms_only", type: "boolean", description: "Only 1:1 (DM) chats", default: "false" },
-          { name: "unread_only", type: "boolean", description: "Only chats with unread_count > 0", default: "false" },
-          { name: "exclude_types", type: "string[]", description: "Message types to exclude", default: '["reaction","poll_update"]' },
-          { name: "min_messages", type: "number", description: "Drop chats with fewer than this many messages in the window", default: "1" },
-          { name: "mode", type: "summary | firehose | rendered", description: "Output shape", default: "summary" },
-          { name: "timezone", type: "string", description: "IANA timezone for today/yesterday boundaries and rendered output", default: "UTC" },
-          { name: "limit", type: "number", description: "Caps firehose results and rendered chat count (max 500)", default: "50" },
-        ],
-      },
-      {
-        method: "TOOL",
-        path: "get_conversation",
-        description:
-          "Fetch messages from a chat and render them as markdown — either the last N messages or a window centered on an anchor (message ID or timestamp). Same compact format as /api/export.",
-        params: [
-          { name: "chat", type: "string", required: true, description: "Chat name or JID" },
-          { name: "around_message_id", type: "string", description: "Center the window on this message; pair with window_minutes" },
-          { name: "around_timestamp", type: "string", description: "Center the window on this timestamp (ISO or unix); pair with window_minutes" },
-          { name: "last_n", type: "number", description: "Fetch the last N messages. Mutually exclusive with around_* anchors (max 500)" },
-          { name: "window_minutes", type: "number", description: "Span (minutes) on either side of the anchor (max 1440)", default: "60" },
-          { name: "timezone", type: "string", description: "IANA timezone for date/time formatting", default: "UTC" },
-          { name: "include_id", type: "boolean", description: "Append #message_id to each line", default: "false" },
-          { name: "include_reactions", type: "boolean", description: "Attach reactions inline under each target message", default: "true" },
-          { name: "include_quoted", type: "boolean", description: "Show a preview of quoted messages above replies", default: "true" },
-        ],
-      },
-      {
-        method: "TOOL",
-        path: "get_message",
-        description:
-          "Fetch a single message by ID with full context: chat, sender, body, media, reactions, and the quoted message preview if any.",
-        params: [
-          { name: "message_id", type: "string", required: true, description: "Message ID (the id / #xxxx reference returned by other tools)" },
-        ],
-      },
-      {
-        method: "TOOL",
-        path: "get_thread",
-        description:
-          "Walk the quote chain backward from a message, following quoted_id up to depth levels. Returns the chain rendered as markdown with message IDs.",
-        params: [
-          { name: "message_id", type: "string", required: true, description: "Starting message ID; the walk follows quoted_id pointers" },
-          { name: "depth", type: "number", description: "Max number of hops to follow (max 20)", default: "5" },
-        ],
-      },
-    ],
-  },
-  {
-    id: "aggregation",
-    title: "Aggregation & export",
-    description: "Summarize a chat, browse media, or render whole conversations to a portable format.",
-    icon: BarChart3,
-    tools: [
-      {
-        method: "TOOL",
-        path: "chat_summary",
-        description:
-          "High-density activity report for a single chat over the last N days: total messages, top participants, peak hour of day, message-type breakdown, media count, and top reactions.",
-        params: [
-          { name: "chat", type: "string", required: true, description: "Chat name or JID. Use resolve_contact first for ambiguous names" },
-          { name: "days", type: "number", description: "Window size in days (max 365)", default: "7" },
-          { name: "timezone", type: "string", description: "IANA timezone used for the peak-hour bucket", default: "UTC" },
-        ],
-      },
-      {
-        method: "TOOL",
-        path: "list_media",
-        description:
-          "Browse media attachments (image, video, audio, document, sticker) across one or all chats, optionally filtered by type or time window. Returns metadata only — fetch bytes via /api/media/:id/download.",
-        params: [
-          { name: "chat", type: "string", description: "Chat name or JID. Omit to search across all chats" },
-          { name: "types", type: "string[]", description: "Media kinds to include (image, video, audio, document, sticker)" },
-          { name: "after", type: "string", description: "Lower bound — ISO 8601 string or unix seconds" },
-          { name: "before", type: "string", description: "Upper bound — ISO 8601 string or unix seconds" },
-          { name: "limit", type: "number", description: "Max media items to return (max 100)", default: "30" },
-        ],
-      },
-      {
-        method: "TOOL",
-        path: "export_conversation",
-        description:
-          "Render one or more chats into markdown, text, or JSON using the same export pipeline as /api/export, returned inline. Use preset=concise for a tight transcript, llm for a balanced view, archive for everything.",
-        params: [
-          { name: "chat", type: "string", description: "Single chat name or JID. Either chat or chats is required" },
-          { name: "chats", type: "string[]", description: "Multiple chats (names or JIDs). Mutually exclusive with chat (1–50)" },
-          { name: "days", type: "number", description: "Window size in days, ending now. Overridden by from/to (max 365)" },
-          { name: "from", type: "string", description: "Window start — ISO 8601 string or unix seconds" },
-          { name: "to", type: "string", description: "Window end — ISO 8601 string or unix seconds" },
-          { name: "preset", type: "concise | full | llm | archive", description: "Field bundle for each message", default: "llm" },
-          { name: "format", type: "md | txt | json", description: "Output format (no zip — binary is not returnable via MCP)", default: "md" },
-          { name: "max_messages", type: "number", description: "Hard ceiling on total messages across all chats (max 10000)", default: "5000" },
-          { name: "timezone", type: "string", description: "IANA timezone for date/time labels", default: "UTC" },
-        ],
-      },
-    ],
-  },
-  {
-    id: "actions",
-    title: "Actions (write)",
-    description:
-      "The only write tools. Clients should confirm with the user before invoking, and targeting always requires an explicit JID — resolve names first.",
-    icon: Send,
-    tools: [
-      {
-        method: "TOOL",
-        path: "send_message",
-        description:
-          "WRITE — Send a WhatsApp message (text, media, or location) to a chat. Requires an explicit JID (resolve names with resolve_contact first). Media kinds need a media_url; use kind=location with the location object.",
-        notes:
-          "Write tool (readOnlyHint: false). MCP clients should confirm with the user before invoking. Targeting requires a literal JID — fuzzy name matching is intentionally not supported here.",
-        params: [
-          { name: "jid", type: "string", required: true, description: "Target JID (e.g. 5511999999999@s.whatsapp.net or ...@g.us)" },
-          { name: "kind", type: "text | image | video | audio | document | location", description: "Message kind. Inferred when omitted; required for media" },
-          { name: "text", type: "string", description: "Text body, or caption for image/video/document media" },
-          { name: "media_url", type: "string", description: "HTTPS URL to fetch media from. Required for image/video/audio/document" },
-          { name: "filename", type: "string", description: "Filename for documents. Required when kind=document" },
-          { name: "mime_type", type: "string", description: "MIME type override. Required for kind=document" },
-          { name: "location", type: "object", description: "{ lat, lng, name?, address? } — used when kind=location" },
-          { name: "quoted_message_id", type: "string", description: "ID of the message to quote/reply to (text only)" },
-        ],
-      },
-      {
-        method: "TOOL",
-        path: "react_to_message",
-        description:
-          "WRITE — Add, replace, or remove a reaction emoji on a specific message. Pass an empty string for emoji to remove an existing reaction. Idempotent.",
-        notes:
-          "Write tool (readOnlyHint: false). MCP clients should confirm with the user before invoking. Targeting requires a literal JID — use resolve_contact first.",
-        params: [
-          { name: "jid", type: "string", required: true, description: "JID of the chat where the message lives" },
-          { name: "message_id", type: "string", required: true, description: "ID of the message to react to (the key.id of the target)" },
-          { name: "emoji", type: "string", required: true, description: 'Reaction emoji (e.g. "👍"). Empty string removes the reaction' },
-        ],
-      },
-    ],
-  },
-]
-
-const TOTAL_TOOLS = TOOL_GROUPS.reduce((sum, g) => sum + g.tools.length, 0)
-
-const CONNECT_EXAMPLE = `# List available tools
-curl -X POST -H "x-api-key: YOUR_KEY" -H "Content-Type: application/json" \\
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' \\
-  http://localhost:3100/mcp
-
-# Call a tool
-curl -X POST -H "x-api-key: YOUR_KEY" -H "Content-Type: application/json" \\
-  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"search_messages","arguments":{"query":"invoice","limit":5}}}' \\
-  http://localhost:3100/mcp`
-
-const CLIENT_CONFIG = `{
-  "mcpServers": {
-    "whatsapp-hub": {
-      "type": "http",
-      "url": "http://localhost:3100/mcp",
-      "headers": { "x-api-key": "YOUR_KEY" }
+  async function check() {
+    controller.current?.abort()
+    const active = new AbortController()
+    controller.current = active
+    setState({ pending: true })
+    try {
+      const result = await checkMcpConnection(apiKey, active.signal)
+      if (!active.signal.aborted) setState({ pending: false, result })
+    } catch (error) {
+      if (!active.signal.aborted) setState({ pending: false, error: error instanceof Error ? error.message : "Connection check failed. Try again." })
     }
   }
-}`
-
-const AUTH_METHODS = [
-  {
-    label: "API key",
-    code: "x-api-key: YOUR_KEY",
-    desc: "Same key as the REST API — for CLI / local clients",
-  },
-  {
-    label: "OAuth 2.1 (Bearer)",
-    code: "Authorization: Bearer <token>",
-    desc: "For claude.ai-style connectors. Discovery at /.well-known/oauth-protected-resource/mcp",
-  },
-]
-
-const MCP_OVERVIEW =
-  "The MCP endpoint speaks JSON-RPC 2.0 over stateless Streamable HTTP — every call is a self-contained `POST /mcp`; `GET` and `DELETE` return 405. Call `tools/list` to discover the live schema and `tools/call` to invoke a tool."
-
-// ---------------------------------------------------------------------------
-// Markdown export — built from the data above so it stays in sync with the page.
-// ---------------------------------------------------------------------------
-
-const MCP_MD_FILENAME = "whatsapp-hub-mcp.md"
-
-function buildMcpMarkdown(): string {
-  const out: string[] = []
-  out.push("# WhatsApp Hub — MCP Server")
-  out.push("")
-  out.push(`Model Context Protocol server · ${TOTAL_TOOLS} tools exposed to AI clients like Claude.`)
-  out.push("")
-  out.push("## Connection & Authentication")
-  out.push("")
-  out.push(MCP_OVERVIEW)
-  out.push("")
-  for (const m of AUTH_METHODS) {
-    out.push(`- **${m.label}** — \`${m.code}\` · ${m.desc}`)
-  }
-  out.push("")
-  out.push("### Connect over HTTP")
-  out.push("")
-  out.push("```bash")
-  out.push(CONNECT_EXAMPLE)
-  out.push("```")
-  out.push("")
-  out.push("### MCP client config (http transport)")
-  out.push("")
-  out.push("```json")
-  out.push(CLIENT_CONFIG)
-  out.push("```")
-  out.push("")
-  out.push("## Tools")
-
-  for (const group of TOOL_GROUPS) {
-    out.push("")
-    out.push(`### ${group.title}`)
-    out.push("")
-    out.push(group.description)
-    for (const tool of group.tools) {
-      out.push("")
-      out.push(`#### \`${tool.path}\``)
-      out.push("")
-      out.push(tool.description)
-      if (tool.notes) {
-        out.push("")
-        out.push(`> ${tool.notes}`)
-      }
-      const params = tool.params ?? []
-      if (params.length > 0) {
-        out.push("")
-        out.push("| Parameter | Type | Required | Default | Description |")
-        out.push("| --- | --- | --- | --- | --- |")
-        for (const p of params) {
-          const required = p.required ? "yes" : "no"
-          const def = p.default !== undefined ? `\`${p.default}\`` : "—"
-          const desc = p.description.replace(/\|/g, "\\|")
-          out.push(`| \`${p.name}\` | \`${p.type}\` | ${required} | ${def} | ${desc} |`)
-        }
-      }
-    }
-  }
-
-  out.push("")
-  return out.join("\n")
+  return <section className="rounded-2xl border border-border/60 bg-card p-5 sm:p-6" aria-labelledby="connection-test-title">
+    <div className="flex items-center gap-2 text-muted-foreground"><Wifi className="h-4 w-4" /><span className="text-xs font-medium">Connection check</span></div>
+    <h2 id="connection-test-title" className="mt-3 text-lg font-semibold">Verify before you connect</h2>
+    <p className="mt-2 text-sm leading-relaxed text-muted-foreground">Test MCP authentication, initialization, and tool discovery using your dashboard API key.</p>
+    <Button variant="outline" className="mt-5 w-full" onClick={() => void check()} disabled={state.pending}>
+      {state.pending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+      {state.pending ? "Checking MCP…" : state.result || state.error ? "Run check again" : "Test connection"}
+    </Button>
+    <div className="mt-4 text-sm" role="status" aria-live="polite">
+      {state.result ? <div className="space-y-2"><p className="flex items-center gap-2 font-medium text-primary"><Check className="h-4 w-4" />MCP is responding</p><p className="text-muted-foreground">{state.result.toolCount} tools discovered · protocol {state.result.protocolVersion}</p></div>
+        : state.error ? <p className="leading-relaxed text-destructive">{state.error}</p>
+        : <p className="text-muted-foreground">{state.pending ? "Authenticating and discovering tools…" : "Not tested in this session."}</p>}
+    </div>
+    <p className="mt-4 border-t border-border/50 pt-4 text-xs leading-relaxed text-muted-foreground">Checks this dashboard’s route to MCP. External agent reachability and OAuth consent must be verified in your agent. No conversations are read or messages sent.</p>
+  </section>
 }
 
-// ---------------------------------------------------------------------------
-// Page
-// ---------------------------------------------------------------------------
+function ConnectWorkspace({ setup }: { setup: McpSetup }) {
+  const apiKey = useAuthStore(s => s.apiKey)
+  const [selectedMode, setSelectedMode] = useState<AuthMode | null>(null)
+  const mode = selectedMode === "api-key" || !setup.auth.oauth.enabled ? "api-key" : "oauth"
+  const [reveal, setReveal] = useState(false)
+  const [view, setView] = useState<"prompt" | "config">("prompt")
+  const actual = view === "prompt" ? buildAgentPrompt(setup, mode, apiKey) : buildClientConfig(setup, mode, apiKey)
+  const preview = view === "prompt" ? buildAgentPrompt(setup, mode, reveal ? apiKey : MASKED_KEY) : buildClientConfig(setup, mode, reveal ? apiKey : MASKED_KEY)
+  const isKey = mode === "api-key"
+  const readCount = setup.tools.filter(t => toolAccess(t) === "Read").length
+  const writeCount = setup.tools.filter(t => toolAccess(t) === "Write").length
+
+  return <div className="space-y-10">
+    <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_320px]">
+      <section className="min-w-0 overflow-hidden rounded-2xl border border-primary/25 bg-card" aria-labelledby="connect-title">
+        <div className="border-b border-border/60 p-5 sm:p-7">
+          <div className="mb-4 flex items-center gap-2 text-xs font-medium text-primary"><span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10">1</span> Connect your agent</div>
+          <h2 id="connect-title" className="text-xl font-semibold tracking-tight sm:text-2xl">Your WhatsApp, ready for your AI.</h2>
+          <p className="mt-2 max-w-xl text-sm leading-relaxed text-muted-foreground">Paste the setup prompt into your agent. It includes this server’s connection details and a practical guide to using your WhatsApp tools.</p>
+          <div className="mt-6 flex flex-col gap-3 rounded-xl border border-border/60 bg-background/60 p-4 sm:flex-row sm:items-center">
+            <div className="min-w-0 flex-1"><p className="mb-1 text-xs text-muted-foreground">MCP server URL</p><code className="break-all text-sm" data-testid="mcp-url">{setup.mcpUrl}</code></div>
+            <CopyAction text={setup.mcpUrl} label="Copy URL" />
+          </div>
+          <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground"><span>Streamable HTTP</span><span>{setup.urlSource === "configured" ? "Server-configured address" : "Address derived from this request"}</span></div>
+        </div>
+        <div className="space-y-5 p-5 sm:p-7">
+          <fieldset>
+            <legend className="mb-3 text-sm font-medium">Choose how to authenticate</legend>
+            <div className="grid gap-3 sm:grid-cols-2">
+              {(["oauth", "api-key"] as const).map(value => <label key={value} className={`relative flex cursor-pointer gap-3 rounded-xl border p-4 transition-colors focus-within:ring-2 focus-within:ring-primary ${mode === value ? "border-primary/60 bg-primary/5" : "border-border/70 hover:bg-muted/30"} ${value === "oauth" && !setup.auth.oauth.enabled ? "cursor-not-allowed opacity-55" : ""}`}>
+                <input className="mt-1 accent-[var(--color-primary)]" type="radio" name="mcp-auth" value={value} checked={mode === value} disabled={value === "oauth" && !setup.auth.oauth.enabled} onChange={() => { setSelectedMode(value); setReveal(false) }} />
+                <div><span className="flex items-center gap-2 text-sm font-medium">{value === "oauth" ? <ShieldCheck className="h-4 w-4" /> : <KeyRound className="h-4 w-4" />}{value === "oauth" ? "OAuth" : "API key"}</span><p className="mt-1 text-xs leading-relaxed text-muted-foreground">{value === "oauth" ? setup.auth.oauth.enabled ? "Recommended · authorize in your browser" : "Not configured on this server" : "For clients that support custom headers"}</p></div>
+              </label>)}
+            </div>
+          </fieldset>
+          {!setup.auth.oauth.enabled && <p className="text-xs leading-relaxed text-muted-foreground">{setup.auth.oauth.reason || "OAuth is unavailable. Configure the server’s public URL and OAuth password to enable browser authorization."}</p>}
+          <div className="overflow-hidden rounded-xl border border-border/60 bg-background/60">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/60 px-3 py-2">
+              <div className="flex gap-1" role="group" aria-label="Connection format">
+                <Button size="sm" variant={view === "prompt" ? "secondary" : "ghost"} aria-pressed={view === "prompt"} onClick={() => setView("prompt")}>Agent prompt</Button>
+                <Button size="sm" variant={view === "config" ? "secondary" : "ghost"} aria-pressed={view === "config"} onClick={() => setView("config")}>JSON config</Button>
+              </div>
+              {isKey && <Button size="sm" variant="ghost" onClick={() => setReveal(v => !v)}>{reveal ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}{reveal ? "Hide key" : "Reveal key"}</Button>}
+            </div>
+            <div className="px-4 pt-4 text-xs font-medium text-muted-foreground">{view === "prompt" ? "Paste this into your AI agent to connect your WhatsApp" : "HTTP client configuration · field names may vary by client"}</div>
+            <pre tabIndex={0} aria-label={view === "prompt" ? "Agent connection prompt" : "MCP client JSON configuration"} className="max-h-80 overflow-auto whitespace-pre-wrap break-words p-4 text-xs leading-6 text-foreground/80 [overflow-wrap:anywhere]"><code>{preview}</code></pre>
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="max-w-sm text-xs leading-relaxed text-muted-foreground">{isKey ? "Copy includes your current API key. Paste it only into the agent you want to grant access." : "No API key in this prompt. Complete authorization in your agent’s browser flow."}</p>
+            <CopyAction text={actual} label={view === "prompt" ? "Copy prompt" : "Copy config"} primary />
+          </div>
+          <div className="flex gap-3 border-t border-border/60 pt-5"><span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-muted text-xs text-muted-foreground">2</span><p className="text-sm leading-relaxed text-muted-foreground">Let your agent finish setup, then ask it to <span className="text-foreground">list the available WhatsApp tools</span>. A successful tool list confirms the connection before you begin.</p></div>
+        </div>
+      </section>
+      <aside className="space-y-5">
+        <ConnectionTest />
+        <section className="px-1 py-2" aria-labelledby="capabilities-title">
+          <h2 id="capabilities-title" className="text-sm font-medium">One connection. Useful context.</h2>
+          <p className="mt-2 text-sm leading-relaxed text-muted-foreground">Search, read conversations, summarize activity, and act when you ask.</p>
+          <dl className="mt-5 grid grid-cols-2 gap-4 border-y border-border/60 py-4"><div><dt className="text-xs text-muted-foreground">Read tools</dt><dd className="mt-1 text-2xl font-semibold tabular-nums">{readCount}</dd></div><div><dt className="text-xs text-muted-foreground">Write tools</dt><dd className="mt-1 text-2xl font-semibold tabular-nums">{writeCount}</dd></div></dl>
+          <p className="mt-3 text-xs leading-relaxed text-muted-foreground">These labels describe tool behavior; they are not permission scopes. Both authentication methods can grant write access.</p>
+        </section>
+      </aside>
+    </div>
+    {setup.warnings.length > 0 && <section className="rounded-xl border border-amber-500/25 bg-amber-500/5 p-5" aria-label="Connection configuration notes"><h2 className="mb-2 text-sm font-medium text-amber-300">Check your server address</h2><ul className="list-disc space-y-2 pl-4 text-sm leading-relaxed text-muted-foreground">{setup.warnings.map(warning => <li key={warning}>{warning}</li>)}</ul></section>}
+    <section className="grid gap-6 border-y border-border/60 py-7 lg:grid-cols-[0.8fr_1.2fr]" aria-labelledby="agent-workflow-title">
+      <div><p className="mb-2 text-xs font-medium text-primary">Built for focused retrieval</p><h2 id="agent-workflow-title" className="text-xl font-semibold tracking-tight">Less context. Better answers.</h2><p className="mt-2 max-w-md text-sm leading-relaxed text-muted-foreground">The setup prompt teaches your agent to find the relevant slice of WhatsApp instead of loading everything.</p></div>
+      <ol className="space-y-4">
+        {[["Find the right conversation", "Resolve a name, inspect a short activity summary, or search with filters."], ["Read only what matters", "Pull a bounded conversation window. Expand when the task needs more evidence."], ["Act deliberately", "Verify recipients, keep message references, and check delivery before retrying a send."]].map(([title, description], index) => <li key={title} className="flex gap-3"><span className="mt-0.5 text-xs tabular-nums text-muted-foreground">0{index + 1}</span><div><h3 className="text-sm font-medium">{title}</h3><p className="mt-1 text-sm leading-relaxed text-muted-foreground">{description}</p></div></li>)}
+      </ol>
+    </section>
+    <ToolCatalog tools={setup.tools} />
+    <section className="space-y-3" aria-labelledby="troubleshooting-title">
+      <h2 id="troubleshooting-title" className="flex items-center gap-2 text-lg font-semibold"><CircleHelp className="h-5 w-5 text-muted-foreground" />Connection help</h2>
+      {[
+        ["My agent cannot reach the server", "A hosted agent needs a URL reachable from its network. Localhost points to the agent’s own machine, and private network addresses need an appropriate network connection. Configure PUBLIC_BASE_URL to the reachable HTTPS address and ensure your proxy forwards /mcp and the OAuth routes."],
+        ["The URL opens an error in my browser", "This server uses stateless Streamable HTTP. Opening /mcp performs GET, which returns 405 after authentication. An MCP client must POST with Accept: application/json, text/event-stream. Use the connection check above."],
+        ["API key or OAuth authentication fails", "API keys belong in x-api-key. Authorization: Bearer is for OAuth access tokens, not the API key. OAuth also requires a configured PUBLIC_BASE_URL and MCP_OAUTH_PASSWORD; enter that password only on the server’s consent page."],
+        ["Connected, but messages are missing", "MCP connection and WhatsApp synchronization are separate. Check Connection for your WhatsApp session and Messages for history sync. Stored history can be incomplete; an empty search does not prove a conversation never happened."],
+      ].map(([title, description]) => <details key={title} className="rounded-xl border border-border/60 px-5 py-4"><summary className="cursor-pointer text-sm font-medium focus-visible:outline-primary">{title}</summary><p className="mt-3 max-w-3xl text-sm leading-relaxed text-muted-foreground">{description}</p></details>)}
+    </section>
+  </div>
+}
 
 export function McpPage() {
-  return (
-    <div className="space-y-6 pb-16">
-      {/* Header */}
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2.5 mb-1">
-            <Plug className="h-5 w-5 text-primary" />
-            <h1 className="text-2xl font-semibold tracking-tight">MCP Server</h1>
-          </div>
-          <p className="text-sm text-muted-foreground">
-            Model Context Protocol server &middot; {TOTAL_TOOLS} tools exposed to AI clients like Claude
-          </p>
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <ExportMarkdownMenu filename={MCP_MD_FILENAME} getMarkdown={buildMcpMarkdown} />
-        </div>
-      </div>
-
-      {/* Connection */}
-      <Card className="gap-0 py-0 overflow-hidden">
-        <div className="flex items-center gap-2.5 px-5 py-4 border-b border-border/50 bg-muted/20">
-          <Lock className="h-4 w-4 text-amber-400" />
-          <h2 className="text-sm font-semibold">Connection &amp; Authentication</h2>
-          <div className="ml-auto flex items-center gap-2">
-            <MethodBadge method="POST" />
-            <Badge variant="secondary" className="text-xs font-mono">/mcp</Badge>
-          </div>
-        </div>
-        <CardContent className="p-5 space-y-4">
-          <p className="text-sm text-muted-foreground leading-relaxed">
-            The MCP endpoint speaks JSON-RPC 2.0 over stateless Streamable HTTP — every call is a
-            self-contained <code className="text-xs bg-muted rounded px-1.5 py-0.5 font-mono">POST /mcp</code>;
-            {" "}<code className="text-xs bg-muted rounded px-1.5 py-0.5 font-mono">GET</code> and{" "}
-            <code className="text-xs bg-muted rounded px-1.5 py-0.5 font-mono">DELETE</code> return 405.
-            Call <code className="text-xs bg-muted rounded px-1.5 py-0.5 font-mono">tools/list</code> to discover
-            the live schema and <code className="text-xs bg-muted rounded px-1.5 py-0.5 font-mono">tools/call</code> to invoke a tool.
-          </p>
-
-          <div className="grid gap-3 sm:grid-cols-2">
-            {AUTH_METHODS.map((m) => (
-              <div key={m.label} className="rounded-lg border border-border/50 p-3 bg-muted/20">
-                <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider mb-1.5">{m.label}</div>
-                <code className="text-xs font-mono text-foreground/90 break-all">{m.code}</code>
-                <p className="text-[11px] text-muted-foreground/60 mt-1">{m.desc}</p>
-              </div>
-            ))}
-          </div>
-
-          <CodeBlock code={CONNECT_EXAMPLE} label="Connect over HTTP" />
-          <CodeBlock code={CLIENT_CONFIG} label="MCP client config (http transport)" />
-        </CardContent>
-      </Card>
-
-      {/* Tool groups */}
-      {TOOL_GROUPS.map((group) => (
-        <Card key={group.id} className="gap-0 py-0 overflow-hidden">
-          <div className="flex items-center gap-2.5 px-5 py-4 border-b border-border/50 bg-muted/20">
-            <group.icon className="h-4 w-4 text-teal-400" />
-            <div>
-              <h2 className="text-sm font-semibold">{group.title}</h2>
-              <p className="text-xs text-muted-foreground mt-0.5">{group.description}</p>
-            </div>
-            <Badge variant="secondary" className="text-xs font-mono ml-auto shrink-0">
-              {group.tools.length} {group.tools.length === 1 ? "tool" : "tools"}
-            </Badge>
-          </div>
-          <div>
-            {group.tools.map((tool, i) => (
-              <EndpointCard
-                key={tool.path}
-                endpoint={tool}
-                isLast={i === group.tools.length - 1}
-              />
-            ))}
-          </div>
-        </Card>
-      ))}
-    </div>
-  )
+  const apiKey = useAuthStore(s => s.apiKey)
+  const setup = useQuery({ queryKey: ["mcp-setup"], queryFn: () => api.get<McpSetup>("/api/mcp/setup"), staleTime: 60_000 })
+  return <div className="mx-auto max-w-6xl space-y-7 pb-12">
+    <header className="flex flex-wrap items-start justify-between gap-4">
+      <div><div className="mb-3 flex items-center gap-2 text-xs font-medium text-primary"><Plug className="h-4 w-4" />WhatsApp Hub / MCP</div><h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">Connect your AI</h1><p className="mt-3 max-w-xl text-sm leading-relaxed text-muted-foreground">Give your agent a direct connection to your WhatsApp, with tools designed for focused, reliable work.</p></div>
+      {setup.data && <div className="space-y-1 text-right"><ExportMarkdownMenu key={setup.dataUpdatedAt} filename="whatsapp-hub-agent-guide.md" getMarkdown={() => buildAgentGuide(setup.data!)} label="Export agent guide" /><p className="text-[11px] text-muted-foreground">Live tool reference · no credentials</p></div>}
+    </header>
+    {setup.isPending ? <div aria-label="Loading connection details" className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_320px]"><Skeleton className="h-[580px] rounded-2xl" /><Skeleton className="h-80 rounded-2xl" /></div>
+      : setup.isError ? <section role="alert" className="rounded-2xl border border-destructive/30 bg-card p-6"><h2 className="text-lg font-semibold">Could not load MCP connection details</h2><p className="mt-2 text-sm text-muted-foreground">Check that the backend is reachable and includes the MCP setup endpoint. Sign in again if your API key has changed.</p><Button className="mt-4" variant="outline" onClick={() => void setup.refetch()} disabled={setup.isFetching}><RefreshCw className="h-4 w-4" />Retry setup</Button></section>
+      : !apiKey ? <p role="alert">Sign in again to generate your connection prompt.</p>
+      : <ConnectWorkspace setup={setup.data} />}
+    <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-border/60 pt-5 text-xs text-muted-foreground"><span className="flex items-center gap-2"><Terminal className="h-4 w-4" />Model Context Protocol · Streamable HTTP</span><a className="inline-flex items-center gap-1 hover:text-foreground" href="/api-docs">Explore the REST API <ArrowRight className="h-3 w-3" /></a></footer>
+  </div>
 }

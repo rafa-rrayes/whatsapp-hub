@@ -33,7 +33,7 @@ function AuthenticatedApp() {
         <Route path="connection" element={<ConnectionPage />} />
         <Route path="settings" element={<SettingsPage />} />
         <Route path="api-docs" element={<ApiDocsPage />} />
-        <Route path="mcp" element={<McpPage />} />
+        <Route path="connect" element={<McpPage />} />
       </Route>
     </Routes>
   )
