@@ -1,37 +1,74 @@
-# Dependencies
-node_modules/
-frontend/node_modules/
+# Keep the repository root limited to application code, tooling, and public docs.
+# Add new intentional top-level project paths here; scratch files stay local.
+/*
+!/.gitignore
+!/.dockerignore
+!/.env.example
+!/.github/
+!/src/
+!/frontend/
+!/dsh/
+!/scripts/
+!/docs/
+!/Dockerfile
+!/docker-compose.yml
+!/entrypoint.sh
+!/package.json
+!/package-lock.json
+!/requirements*.txt
+!/tsconfig*.json
+!/vitest.config.ts
+!/README.md
+!/LICENSE
+!/CHANGELOG.md
+!/CONTRIBUTING.md
+!/SECURITY.md
+!/CODE_OF_CONDUCT.md
 
-# Build output
+# Dependencies and generated output (also in nested packages)
+node_modules/
 dist/
+dist-ssr/
 public/
+coverage/
+playwright-report/
+test-results/
+.cache/
 __pycache__/
-*.pyc
+*.py[cod]
+*.tsbuildinfo
 scripts/out/
 
-# Runtime data
+# Runtime data and secrets; only sanitized example env files belong in Git.
 data/
-
-# Environment
 .env
-.env.local
-.env.*.local
-
-# Logs
+.env.*
+!.env.example
+!.env.*.example
+*.local
 *.log
 logs/
 
-# OS
+# Local coding-agent instructions, plans, transcripts, and state.
+# Product agent code, bundled skills, and preset templates remain tracked.
+tasks/
+.agents/
+.codex/
+.claude/
+.cursor/
+.whatsapp-agent*/
+.atsapp-agent*/
+.whatsapp-agent-state*
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+/dsh/docs/IMPLEMENTATION_PROMPT.md
+
+# OS and editor files
 .DS_Store
 Thumbs.db
-
-# IDEs
 .idea/
 .vscode/
 *.swp
 *.swo
 *~
-
-# Claude
-.claude/
-/tests

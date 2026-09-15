@@ -14,3 +14,23 @@ data
 .DS_Store
 LICENSE
 README.md
+
+# Local agent work and private runtime state are not build inputs.
+**/tasks
+**/.agents
+**/.codex
+**/.claude
+**/.cursor
+**/.whatsapp-agent*
+**/.atsapp-agent*
+**/AGENTS.md
+**/CLAUDE.md
+**/GEMINI.md
+dsh/docs/IMPLEMENTATION_PROMPT.md
+image.png
+**/.env.*
+!**/.env.example
+!**/.env.*.example
+**/coverage
+**/playwright-report
+**/test-results

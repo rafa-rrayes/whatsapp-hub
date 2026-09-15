@@ -11,7 +11,7 @@
     - id: whatsapp-agent
       name: '@rafa/dsh-whatsapp-agent'
       config:
-        hubUrl: 'https://zapzaphub.rrayes.com.br'
+        hubUrl: 'http://127.0.0.1:3100'
         # Never commit a real API key: set it in the profile's own
         # cordis.patch.yml (applied after this bundle layer) or live in
         # Settings → WhatsApp Agent. Empty key = echoMode (dry-run tools).

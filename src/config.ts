@@ -46,6 +46,7 @@ export const config = {
   // OAuth 2.1 for /mcp (claude.ai-style connectors)
   mcpOauthPassword: process.env.MCP_OAUTH_PASSWORD || '',
   publicBaseUrl: process.env.PUBLIC_BASE_URL || `http://localhost:${rawPort}`,
+  publicBaseUrlConfigured: Boolean(process.env.PUBLIC_BASE_URL),
   allowInsecureIssuerUrl: process.env.MCP_DANGEROUSLY_ALLOW_INSECURE_ISSUER_URL === '1'
     || process.env.MCP_DANGEROUSLY_ALLOW_INSECURE_ISSUER_URL === 'true',
 

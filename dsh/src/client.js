@@ -411,7 +411,7 @@ function Panel() {
 
     // configuration
     React.createElement(Card, { title: 'Configuration', note: 'Secrets left blank keep their current value.', index: 2 },
-      React.createElement(Field, { label: 'Hub URL', value: cfg.hubUrl, placeholder: 'https://zapzaphub.rrayes.com.br', onChange: (v) => setCfg({ ...cfg, hubUrl: v }) }),
+      React.createElement(Field, { label: 'Hub URL', value: cfg.hubUrl, placeholder: 'http://127.0.0.1:3100', onChange: (v) => setCfg({ ...cfg, hubUrl: v }) }),
       React.createElement(Field, { label: 'API key', type: 'password', placeholder: 'unchanged', value: cfg.apiKey, onChange: (v) => setCfg({ ...cfg, apiKey: v }) }),
       React.createElement(Field, { label: 'Webhook secret', type: 'password', placeholder: 'unchanged', value: cfg.webhookSecret, onChange: (v) => setCfg({ ...cfg, webhookSecret: v }) }),
       React.createElement(Field, { label: 'Reconcile poll (ms, 0 = off)', type: 'number', value: String(cfg.pollMs), helper: 'Reconciliation polling interval for at-least-once inbound delivery.', onChange: (v) => setCfg({ ...cfg, pollMs: v }) }),
