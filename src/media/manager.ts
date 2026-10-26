@@ -170,14 +170,14 @@ class MediaManager {
 
     log.media.info({ path: relativePath, sizeKB: Math.round(buffer.length / 1024) }, 'Downloaded media');
 
-    // Transcribe audio locally if enabled. Runs inline in the serial queue and
-    // is fully error-contained so it never triggers a download retry.
+    // Transcribe audio if enabled. Runs inline in the serial queue and is fully
+    // error-contained so it never triggers a download retry.
     await this.maybeTranscribe(mediaId, msg, fullPath, mimeType);
   }
 
   /**
-   * Transcribe audio with the configured CPU-only CrisperWhisper model and store
-   * the result on the message. No-op when disabled or for non-audio media.
+   * Transcribe audio with the OpenAI API and store the result on the message.
+   * No-op when disabled or for non-audio media.
    * Never throws.
    */
   private async maybeTranscribe(mediaId: string, msg: WAMessage, audioPath: string, mimeType: string): Promise<void> {
@@ -193,19 +193,15 @@ class MediaManager {
       this.publishTranscriptionUpdate(msg, messageId, 'pending');
       const text = await transcribeAudio({
         audioPath,
-        mode: settings.transcriptionMode,
         language: settings.transcriptionLanguage,
       });
       messagesRepo.setTranscription(messageId, text || null, 'done');
       this.publishTranscriptionUpdate(msg, messageId, 'done', text || null);
-      log.media.info(
-        { mediaId, mode: settings.transcriptionMode, chars: text.length },
-        'Transcribed audio locally'
-      );
+      log.media.info({ mediaId, chars: text.length }, 'Transcribed audio');
     } catch (err) {
       messagesRepo.setTranscriptionStatus(messageId, 'failed');
       this.publishTranscriptionUpdate(msg, messageId, 'failed');
-      log.media.warn({ err: String(err), mediaId }, 'Local audio transcription failed');
+      log.media.warn({ err: String(err), mediaId }, 'Audio transcription failed');
     }
   }
 

@@ -2,7 +2,6 @@ import { config } from './config.js';
 import { settingsRepo } from './database/repositories/settings.js';
 import { logger } from './utils/logger.js';
 import { encryptSetting, maybeDecryptSetting } from './utils/encryption.js';
-import { stopTranscriptionWorker } from './media/transcribe.js';
 import {
   normalizeTranscriptionLanguage,
   normalizeTranscriptionMode,
@@ -79,11 +78,11 @@ function buildCache(): RuntimeSettings {
   const settings: Record<string, unknown> = {};
   for (const [key, def] of Object.entries(SETTING_DEFS)) {
     let dbVal = dbMap.get(key);
-    // Compatibility for the former remote-transcription boolean in the runtime
-    // settings table: enabled becomes Medium, disabled remains Off.
+    // Compatibility for the former transcription boolean in the runtime
+    // settings table.
     const legacyTranscription = dbMap.get('transcribeMedia');
     if (key === 'transcriptionMode' && dbVal === undefined && legacyTranscription !== undefined) {
-      dbVal = legacyTranscription === 'true' ? 'medium' : 'off';
+      dbVal = legacyTranscription === 'true' ? 'on' : 'off';
     }
     if (dbVal !== undefined && def.secret) dbVal = maybeDecryptSetting(dbVal);
     settings[key] = dbVal !== undefined ? def.parse(dbVal) : def.envDefault();
@@ -93,7 +92,6 @@ function buildCache(): RuntimeSettings {
 
 function applySideEffects(settings: RuntimeSettings): void {
   logger.level = settings.logLevel;
-  if (settings.transcriptionMode === 'off') stopTranscriptionWorker();
 }
 
 export function initSettings(): void {

@@ -242,9 +242,9 @@ describe('settingsUpdateSchema', () => {
     expect(result.success).toBe(false);
   });
 
-  it('accepts local transcription mode and normalizes the language', () => {
+  it('accepts the transcription mode and normalizes the language', () => {
     const result = settingsUpdateSchema.safeParse({
-      transcriptionMode: 'fast',
+      transcriptionMode: 'on',
       transcriptionLanguage: 'PT',
     });
     expect(result.success).toBe(true);
@@ -252,7 +252,7 @@ describe('settingsUpdateSchema', () => {
   });
 
   it('rejects an unknown transcription mode', () => {
-    expect(settingsUpdateSchema.safeParse({ transcriptionMode: 'ultra' }).success).toBe(false);
+    expect(settingsUpdateSchema.safeParse({ transcriptionMode: 'best' }).success).toBe(false);
   });
 });
 

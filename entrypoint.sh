@@ -2,7 +2,7 @@
 set -e
 
 # Ensure data directories exist and are writable by appuser
-mkdir -p /app/data/media /app/data/auth /app/data/models/crisperwhisper
+mkdir -p /app/data/media /app/data/auth
 chown -R appuser:appgroup /app/data
 
 exec gosu appuser node dist/index.js

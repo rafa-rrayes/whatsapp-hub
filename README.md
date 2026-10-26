@@ -18,7 +18,7 @@ WhatsApp  <-->  Baileys Connection  <-->  Event Bus  <-->  SQLite DB
 
 - **Full message capture** — text, images, video, audio, documents, stickers, locations, contacts, reactions, polls, view-once, forwards, quotes, edits, deletes
 - **Media auto-download** — organized by date in `data/media/`
-- **Local audio transcription** — optional CPU-only CrisperWhisper 2.0 transcription for voice notes; transcripts appear inline in REST/MCP reads and are full-text searchable
+- **Audio transcription** — optional voice-note transcription via the OpenAI API; transcripts appear inline in REST/MCP reads and are full-text searchable
 - **Contacts & groups** — names, profile pics, participants, roles, invite codes
 - **Presence tracking** — online/offline/typing/recording status log
 - **Call log** — incoming/outgoing, video/voice, duration
@@ -393,42 +393,28 @@ Write tools advertise `readOnlyHint: false` — MCP clients should confirm with 
 
 ## Media Transcription
 
-Optionally transcribe incoming **voice notes / audio** locally with
-[CrisperWhisper 2.0](https://huggingface.co/nyralabs/CrisperWhisper2.0_large).
-Inference is forced onto the CPU and no audio is sent to a transcription API. The
-resulting text is stored on the message and shows up everywhere you read messages —
-REST API responses (`media_transcription`), MCP tools, and **full-text search**.
+Optionally transcribe incoming **voice notes / audio** with the
+[OpenAI transcription API](https://developers.openai.com/api/docs/guides/speech-to-text)
+(`gpt-transcribe` by default). The resulting text is stored on the message and shows
+up everywhere you read messages — REST API responses (`media_transcription`), MCP
+tools, and **full-text search**.
 
 **Setup:**
 
-1. Docker installations already include the CPU runtime. For a native install,
-   install `ffmpeg`, create a Python environment, and point the hub at it:
-
-   ```bash
-   python3 -m venv .venv-transcription
-   .venv-transcription/bin/pip install -r requirements-transcription.txt
-   export CRISPERWHISPER_PYTHON=.venv-transcription/bin/python
-   ```
-
-2. In **Settings → Media Transcription**, choose the quality and enter the
+1. Set `OPENAI_API_KEY` in the environment. Native installs also need `ffmpeg`
+   on the `PATH` (Docker images include it).
+2. In **Settings → Media Transcription**, turn transcription on and enter the
    two-letter language code spoken in your voice notes. Or set
-   `TRANSCRIPTION_MODE=medium` and `TRANSCRIPTION_LANGUAGE=en` in the environment.
-3. The selected model downloads from Hugging Face on the first new audio message,
-   then stays cached under `DATA_DIR/models/crisperwhisper`.
+   `TRANSCRIPTION_MODE=on` and `TRANSCRIPTION_LANGUAGE=en` in the environment.
 
 Notes:
 
-- **Best** uses `nyralabs/CrisperWhisper2.0_large`, **Medium** uses
-  `nyralabs/CrisperWhisper2.0_medium`, and **Fast** uses
-  `nyralabs/CrisperWhisper2.0_turbo`. **Off** is the default.
-- The worker uses the portable Transformers backend with `device="cpu"` and keeps
-  one model loaded between messages. `float32` is the portable default; compatible
-  CPUs can opt into `bfloat16` with `CRISPERWHISPER_COMPUTE_TYPE` to reduce memory.
+- Audio leaves your server: each new voice note is uploaded to OpenAI.
+- WhatsApp voice notes are Ogg/Opus, which the API does not accept, so they (and any
+  file over the API's 25 MB limit) are converted to mono 32 kbps MP3 with `ffmpeg`
+  first. Audio still over 25 MB after conversion (roughly 1h45m) is marked failed.
 - Images, stickers, video, and documents are not processed.
 - Only **new** media is processed — existing history is left as-is.
-- The standard CrisperWhisper 2.0 weights use the
-  [Nyra Health Non-Commercial Research License](https://huggingface.co/nyralabs/CrisperWhisper2.0_large/blob/main/LICENSE.md).
-  Commercial deployments need a separate model license from Nyra Labs.
 
 ## Example Integrations
 
@@ -488,13 +474,11 @@ ws.on("message", (data) => {
 | `MEDIA_DIR` | `./data/media` | Media storage path |
 | `AUTO_DOWNLOAD_MEDIA` | `true` | Auto-download media files |
 | `MAX_MEDIA_SIZE_MB` | `100` | Max file size to download (0 = unlimited) |
-| `TRANSCRIPTION_MODE` | `off` | Local CPU transcription quality: `off`, `fast`, `medium`, or `best` (also configurable in Settings) |
-| `TRANSCRIPTION_LANGUAGE` | `en` | Two-letter ISO 639-1 language code passed to CrisperWhisper |
-| `CRISPERWHISPER_PYTHON` | `python3` | Python executable containing `crisperwhisper[transformers]` (configured automatically in Docker) |
-| `CRISPERWHISPER_CACHE_DIR` | `DATA_DIR/models/crisperwhisper` | Persistent Hugging Face model cache |
-| `CRISPERWHISPER_COMPUTE_TYPE` | `float32` | CPU tensor type; `bfloat16` reduces memory on compatible CPUs |
-| `CRISPERWHISPER_CPU_THREADS` | `4` | Shared cap for PyTorch and native CPU math runtimes; increase to trade server capacity for lower latency |
-| `CRISPERWHISPER_TIMEOUT_MS` | `1800000` | Maximum time for one audio transcription |
+| `TRANSCRIPTION_MODE` | `off` | Audio transcription: `off` or `on` (also configurable in Settings) |
+| `TRANSCRIPTION_LANGUAGE` | `en` | Two-letter ISO 639-1 language code sent to the API as the expected language |
+| `OPENAI_API_KEY` | — | OpenAI API key, required when transcription is on |
+| `TRANSCRIPTION_MODEL` | `gpt-transcribe` | OpenAI transcription model |
+| `TRANSCRIPTION_TIMEOUT_MS` | `300000` | Maximum time for one audio transcription |
 | `LOG_LEVEL` | `info` | Pino log level |
 | `SESSION_NAME` | `default` | Baileys auth session name |
 | `BEHIND_PROXY` | `false` | Set `true` behind a TLS reverse proxy (enables HSTS, CSP upgrade-insecure-requests, trust proxy) |

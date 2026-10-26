@@ -21,9 +21,7 @@ import type { SettingItem } from "@/lib/types"
 const LOG_LEVELS = ["trace", "debug", "info", "warn", "error", "fatal"] as const
 const TRANSCRIPTION_MODES = [
   { value: "off", label: "Off" },
-  { value: "fast", label: "Fast" },
-  { value: "medium", label: "Medium" },
-  { value: "best", label: "Best" },
+  { value: "on", label: "On" },
 ] as const
 
 function findSetting(items: SettingItem[] | undefined, key: string) {
@@ -191,7 +189,7 @@ export function SettingsPage() {
         <CardContent className="space-y-4">
           <SettingRow
             label="Audio Transcription"
-            description="Run CrisperWhisper 2.0 locally on the CPU. The selected model downloads on first use; transcripts are stored and searchable."
+            description="Send new voice notes to the OpenAI transcription API. Transcripts are stored and searchable. Requires OPENAI_API_KEY."
             isOverridden={isOverridden("transcriptionMode")}
             onReset={() => handleReset("transcriptionMode")}
           >
@@ -213,7 +211,7 @@ export function SettingsPage() {
 
           <SettingRow
             label="Speech Language"
-            description="Two-letter ISO 639-1 code, such as en, pt, es, or de. CrisperWhisper requires an explicit language."
+            description="Two-letter ISO 639-1 code, such as en, pt, es, or de, sent to the API as the expected language."
             isOverridden={isOverridden("transcriptionLanguage")}
             onReset={() => handleReset("transcriptionLanguage")}
           >
@@ -226,11 +224,6 @@ export function SettingsPage() {
               disabled={transcriptionMode === "off"}
             />
           </SettingRow>
-
-          <p className="text-xs text-muted-foreground">
-            Best uses the large model, Medium uses medium, and Fast uses turbo. Nyra Labs&apos;
-            standard model weights require a separate license for commercial use.
-          </p>
         </CardContent>
       </Card>
 

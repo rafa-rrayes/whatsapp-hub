@@ -95,7 +95,7 @@ export const settingsUpdateSchema = z.object({
   logLevel: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).optional(),
   autoDownloadMedia: z.boolean().optional(),
   maxMediaSizeMB: z.number().int().min(0).optional(),
-  transcriptionMode: z.enum(['off', 'fast', 'medium', 'best']).optional(),
+  transcriptionMode: z.enum(['off', 'on']).optional(),
   transcriptionLanguage: z.string()
     .regex(/^[a-z]{2}$/i, 'transcriptionLanguage must be a two-letter ISO 639-1 code')
     .transform((value) => value.toLowerCase())

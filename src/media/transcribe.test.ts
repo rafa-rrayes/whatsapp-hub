@@ -1,40 +1,53 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('../config.js', () => ({
-  config: {
-    crisperWhisperPython: 'python3',
-    crisperWhisperCacheDir: '/tmp/whatsapp-hub-test-models',
-    crisperWhisperComputeType: 'float32',
-    crisperWhisperCpuThreads: 0,
-    crisperWhisperTimeoutMs: 1_000,
-  },
+const config = vi.hoisted(() => ({
+  openaiApiKey: 'sk-test',
+  transcriptionModel: 'gpt-transcribe',
+  transcriptionTimeoutMs: 1_000,
 }));
+vi.mock('../config.js', () => ({ config }));
 
-import {
-  isAudioMimeType,
-  LocalTranscriber,
-  type LocalTranscriberOptions,
-} from './transcribe.js';
-import { CRISPER_WHISPER_MODEL_BY_MODE } from './transcription-modes.js';
+// Stand-in for ffmpeg: writes a small file at the output path (last argument).
+const execFile = vi.hoisted(() =>
+  vi.fn((_cmd: string, args: string[], _opts: unknown, cb: (err: Error | null, out?: unknown) => void) => {
+    fs.writeFileSync(args[args.length - 1], 'mp3');
+    cb(null, { stdout: '', stderr: '' });
+  })
+);
+vi.mock('node:child_process', () => ({ execFile }));
 
-const clients: LocalTranscriber[] = [];
+import { isAudioMimeType, needsConversion, transcribeAudio } from './transcribe.js';
 
-function testClient(workerSource: string, timeoutMs = 1_000): LocalTranscriber {
-  const options: LocalTranscriberOptions = {
-    command: process.execPath,
-    args: ['--input-type=module', '--eval', workerSource],
-    timeoutMs,
-  };
-  const client = new LocalTranscriber(options);
-  clients.push(client);
-  return client;
+let dir: string;
+const fetchMock = vi.fn();
+
+function writeAudio(name: string): string {
+  const file = path.join(dir, name);
+  fs.writeFileSync(file, 'audio');
+  return file;
 }
 
-afterEach(() => {
-  for (const client of clients.splice(0)) client.stop('test cleanup');
+function respond(status: number, body: unknown) {
+  fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(body), { status }));
+}
+
+beforeEach(() => {
+  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'transcribe-test-'));
+  config.openaiApiKey = 'sk-test';
+  vi.stubGlobal('fetch', fetchMock);
 });
 
-describe('local transcription configuration', () => {
+afterEach(() => {
+  fs.rmSync(dir, { recursive: true, force: true });
+  fetchMock.mockReset();
+  execFile.mockClear();
+  vi.unstubAllGlobals();
+});
+
+describe('transcription helpers', () => {
   it('recognizes audio mime types and ignores codec parameters', () => {
     expect(isAudioMimeType('audio/ogg; codecs=opus')).toBe(true);
     expect(isAudioMimeType('audio/mpeg')).toBe(true);
@@ -42,66 +55,58 @@ describe('local transcription configuration', () => {
     expect(isAudioMimeType('video/mp4')).toBe(false);
   });
 
-  it('maps the quality modes to CrisperWhisper 2.0 model shorthands', () => {
-    expect(CRISPER_WHISPER_MODEL_BY_MODE).toEqual({
-      fast: 'turbo',
-      medium: 'medium',
-      best: 'large',
-    });
+  it('converts formats the API rejects and files over 25 MB', () => {
+    expect(needsConversion('/m/voice.oga', 1_000)).toBe(true);
+    expect(needsConversion('/m/voice.ogg', 1_000)).toBe(true);
+    expect(needsConversion('/m/song.mp3', 1_000)).toBe(false);
+    expect(needsConversion('/m/memo.M4A', 1_000)).toBe(false);
+    expect(needsConversion('/m/long.mp3', 26 * 1024 * 1024)).toBe(true);
   });
 });
 
-describe('LocalTranscriber', () => {
-  it('uses a persistent JSON-lines worker and trims its response', async () => {
-    const client = testClient(`
-      import readline from 'node:readline';
-      const lines = readline.createInterface({ input: process.stdin });
-      lines.on('line', (line) => {
-        const request = JSON.parse(line);
-        process.stdout.write(JSON.stringify({
-          id: request.id,
-          text: '  ' + request.model + ':' + request.language + '  '
-        }) + '\\n');
-      });
-    `);
+describe('transcribeAudio', () => {
+  it('uploads supported audio directly with the model and language hint', async () => {
+    respond(200, { text: '  oi tudo bem  ', languages: [{ code: 'pt' }] });
 
-    await expect(client.transcribe({
-      audioPath: '/tmp/voice.ogg',
-      mode: 'fast',
-      language: 'pt',
-    })).resolves.toBe('turbo:pt');
+    await expect(transcribeAudio({ audioPath: writeAudio('memo.mp3'), language: 'pt' })).resolves.toBe('oi tudo bem');
 
-    await expect(client.transcribe({
-      audioPath: '/tmp/voice-2.ogg',
-      mode: 'best',
-      language: 'en',
-    })).resolves.toBe('large:en');
+    expect(execFile).not.toHaveBeenCalled();
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('https://api.openai.com/v1/audio/transcriptions');
+    expect(init.headers).toEqual({ Authorization: 'Bearer sk-test' });
+    const form = init.body as FormData;
+    expect(form.get('model')).toBe('gpt-transcribe');
+    expect(form.getAll('languages[]')).toEqual(['pt']);
+    expect((form.get('file') as File).name).toBe('memo.mp3');
   });
 
-  it('surfaces a worker transcription error', async () => {
-    const client = testClient(`
-      import readline from 'node:readline';
-      const lines = readline.createInterface({ input: process.stdin });
-      lines.on('line', (line) => {
-        const request = JSON.parse(line);
-        process.stdout.write(JSON.stringify({ id: request.id, error: 'decode failed' }) + '\\n');
-      });
-    `);
+  it('converts Ogg voice notes to mp3 and cleans up the temp file', async () => {
+    respond(200, { text: 'hello' });
 
-    await expect(client.transcribe({
-      audioPath: '/tmp/broken.ogg',
-      mode: 'medium',
-      language: 'en',
-    })).rejects.toThrow('decode failed');
+    await expect(transcribeAudio({ audioPath: writeAudio('voice.oga'), language: 'en' })).resolves.toBe('hello');
+
+    expect(execFile).toHaveBeenCalledOnce();
+    const args = execFile.mock.calls[0][1];
+    const output = args[args.length - 1];
+    expect(path.basename(output)).toBe('audio.mp3');
+    expect(fs.existsSync(path.dirname(output))).toBe(false);
+    expect(((fetchMock.mock.calls[0][1].body as FormData).get('file') as File).name).toBe('audio.mp3');
   });
 
-  it('stops a worker that exceeds the configured timeout', async () => {
-    const client = testClient(`process.stdin.resume();`, 25);
+  it('surfaces API errors with the status and message', async () => {
+    respond(429, { error: { message: 'You have no credits remaining.' } });
 
-    await expect(client.transcribe({
-      audioPath: '/tmp/slow.ogg',
-      mode: 'fast',
-      language: 'en',
-    })).rejects.toThrow(/timed out/i);
+    await expect(transcribeAudio({ audioPath: writeAudio('memo.mp3'), language: 'en' })).rejects.toThrow(
+      'OpenAI transcription failed (429): You have no credits remaining.'
+    );
+  });
+
+  it('fails fast without an API key', async () => {
+    config.openaiApiKey = '';
+
+    await expect(transcribeAudio({ audioPath: writeAudio('memo.mp3'), language: 'en' })).rejects.toThrow(
+      'OPENAI_API_KEY is not set'
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

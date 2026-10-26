@@ -8,11 +8,6 @@ vi.mock('./config.js', () => ({
     maxMediaSizeMB: 100,
     transcriptionMode: 'off',
     transcriptionLanguage: 'en',
-    crisperWhisperPython: 'python3',
-    crisperWhisperCacheDir: '/tmp/whatsapp-hub-test-models',
-    crisperWhisperComputeType: 'float32',
-    crisperWhisperCpuThreads: 0,
-    crisperWhisperTimeoutMs: 1_000,
     security: { encryptionKey: 'test-encryption-key-at-least-16-chars' },
   },
 }));
@@ -33,16 +28,24 @@ vi.mock('./utils/logger.js', () => ({
 }));
 
 const settings = await import('./settings.js');
-describe('local transcription settings', () => {
+describe('transcription settings', () => {
   beforeEach(() => {
     store.clear();
     settings.initSettings();
   });
 
   it('stores and reads the selected mode', () => {
-    settings.updateSettings({ transcriptionMode: 'best' });
-    expect(store.get('transcriptionMode')).toBe('best');
-    expect(settings.getSettings().transcriptionMode).toBe('best');
+    settings.updateSettings({ transcriptionMode: 'on' });
+    expect(store.get('transcriptionMode')).toBe('on');
+    expect(settings.getSettings().transcriptionMode).toBe('on');
+  });
+
+  it('turns the former local quality levels into on', () => {
+    for (const legacy of ['fast', 'medium', 'best']) {
+      store.set('transcriptionMode', legacy);
+      settings.initSettings();
+      expect(settings.getSettings().transcriptionMode).toBe('on');
+    }
   });
 
   it('stores the explicit speech language', () => {
@@ -50,10 +53,10 @@ describe('local transcription settings', () => {
     expect(settings.getSettings().transcriptionLanguage).toBe('pt');
   });
 
-  it('maps the legacy enabled boolean to Medium', () => {
+  it('maps the legacy enabled boolean to on', () => {
     store.set('transcribeMedia', 'true');
     settings.initSettings();
-    expect(settings.getSettings().transcriptionMode).toBe('medium');
+    expect(settings.getSettings().transcriptionMode).toBe('on');
   });
 
   it('keeps a legacy disabled override off', () => {
